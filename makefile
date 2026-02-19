@@ -7,9 +7,10 @@ ifeq ($(OS), Windows_NT)
 else
 	UNAME_S := $(shell uname -s)
 	ifeq ($(UNAME_S), Linux)
-		CC65_HOME = /usr/local/share/cc65
+		CC65_HOME = ../Tools/cc65-linux
 		AS = $(CC65_HOME)/bin/ca65
 		LD = $(CC65_HOME)/bin/ld65
+		EMU = ../Tools/Mesen
 	endif
 		
 endif
@@ -17,9 +18,9 @@ endif
 PROJECT = rainfall
 
 # Chemins
-SRC_DIR = .\src
-OBJ_DIR = .\obj
-BIN_DIR = .\bin
+SRC_DIR = ./src
+OBJ_DIR = ./obj
+BIN_DIR = ./bin
 
 # Fichiers sources 
 ASM_SOURCES = $(SRC_DIR)/$(PROJECT).asm
@@ -41,6 +42,10 @@ LDFLAGS = -C $(SRC_DIR)/$(PROJECT).cfg -o $(TARGET) --dbgfile $(BIN_DIR)/$(PROJE
 
 # Règles
 all: $(TARGET)
+
+debug:
+	echo $(TARGET)
+	echo $(OBJECTS)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.asm
 	@mkdir -p $(@D)
