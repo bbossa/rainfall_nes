@@ -64,6 +64,11 @@ INES_SRAM   = 0 ; 1 = battery backed SRAM at $6000-7FFF
 
 time: .res 1
 lasttime: .res 1
+level: .res 1
+animate: .res 1
+enemydata: .res 10
+enemycooldown: .res 1
+temp: .res 10
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -359,6 +364,23 @@ titleloop:
 	and #PAD_A|PAD_START|PAD_L|PAD_R   	; i.e. AND #%00001001
 	beq titleloop			; Branch on Equal - Branch is zero flag is set - If A or Start is not presses, then result is 0 (any other button can be pressed)
 
+	; set our random seed based on the time counter since the splash screen was displayed
+	lda time
+	sta SEED0
+	lda time+1
+	sta SEED0+1
+	jsr randomize
+	sbc time+1
+	sta SEED2   
+	jsr randomize
+	sbc time
+	sta SEED2+1
+
+	; set up ready for a new game
+	lda #1
+	sta level
+	jsr setup_level
+
 	; draw the game screen
 	jsr display_game_screen
 
@@ -418,7 +440,12 @@ mainloop:
 	; time has changed update the lasttime value
 	sta lasttime
 
+	; Check user input
 	jsr player_actions
+
+	; Spawn and move ennemies
+	jsr spawn_enemies
+	jsr move_enemies
 
 	; ensure our changes are rendered
  	lda #1
@@ -428,64 +455,238 @@ mainloop:
 
  .endproc
 
- ;*****************************************************************
+;*****************************************************************
 ; Check for the game controller, move the player
 ;*****************************************************************
 .segment "CODE"
 .proc player_actions
+	; Poll gamepad
 	jsr gamepad_poll
-	lda gamepad
-	and #PAD_L
-	beq not_gamepad_left
+	lda gamepad 				; Load A with Pad A buttons status
+	and #PAD_L 					; AND with mask PAD_L (does left pressed)
+	beq not_gamepad_left		; Branch if Equal - zero flag is set -> means left not pressed
 		; game pad has been pressed left
-		lda oam + 3 ; get current x of cloud
-		cmp #0
-		beq not_gamepad_left
-		; subtract 1 from the ship position
-		sec
-		sbc #2
-		; update the four sprites that make up the ship
-		sta oam + 3
-		sta oam + 15
-		clc
-		adc #8
-		sta oam + 7
-		sta oam + 19
-		clc
-		adc #8
-		sta oam + 11
-		sta oam + 23
+		lda oam + 3 			; get current x of cloud (sprite 0 - byte 3)
+		cmp #0 					; Comparison with 0 (mean cloud touch the left border)
+		beq not_gamepad_left	; Branch if equal - Zero flag is set -> comparison is true don't move
+		; subtract 4 from the ship position
+		sec 					; Set the carry flag to one.
+		sbc #4 					; Subtract with Carry A,Z,C,N = A-M-(1-C)
+		; update the six sprites that make up the cloud
+		; S1 S2 S3
+		; S4 S5 S6
+		sta oam + 3 			; sprite 1
+		sta oam + 15 			; sprite 4
+		clc 					; Set the carry flag to zero.
+		adc #8 					; Add 8 (position of S2 / S5)
+		sta oam + 7 			; sprite 2
+		sta oam + 19 			; sprite 5
+		clc 					; Set the carry flag to zero.
+		adc #8 					; Add 8 (position of S2 / S5)
+		sta oam + 11 			; sprite 3
+		sta oam + 23 			; sprite 6
 		
 not_gamepad_left:
 	lda gamepad
 	and #PAD_R
 	beq not_gamepad_right
 		; gamepad has been pressed right
-		; gamepad has been pressed right
-		lda oam + 3 ; get current X of cloud
-		clc
-		adc #22 ; allow with width of cloud
-		cmp #254
-		beq not_gamepad_right
-		lda oam + 3 ; get current X of cloud
-		clc
-		adc #2
-		; update the four sprites that make up the ship
-		sta oam + 3
-		sta oam + 15
-		clc
-		adc #8
-		sta oam + 7
-		sta oam + 19
-		clc
-		adc #8
-		sta oam + 11
-		sta oam + 23
+		lda oam + 3  			; get current X of cloud
+		clc 					; Set the carry flag to zero.
+		adc #22 				; allow with width of cloud
+		cmp #254 				; Comparison with right border	
+		beq not_gamepad_right 	; don't move
+		lda oam + 3 			; get current X of cloud
+		clc 					; Set the carry flag to zero.
+		adc #4 					; Add with carry
+		; update the six sprites that make up the cloud
+		sta oam + 3 			; sprite 1
+		sta oam + 15 			; sprite 4
+		clc 					; Set the carry flag to zero.
+		adc #8 					; Add with carry
+		sta oam + 7 			; sprite 2
+		sta oam + 19 			; sprite 5
+		clc 					; Set the carry flag to zero.
+		adc #8 					; Add with carry
+		sta oam + 11 			; sprite 3
+		sta oam + 23			; sprite 6
 not_gamepad_right:
 	rts
 .endproc
 
- ;*****************************************************************
+;*****************************************************************
+; Get setup for a new level
+;*****************************************************************
+.segment "CODE"
+
+.proc setup_level 	
+	lda #0 ; clear enemy data
+	ldx #0
+@loop:
+	sta enemydata,x
+	inx
+	cpx #10
+	bne @loop
+	lda #20 ; set initial enemy cool down
+	sta enemycooldown
+	rts
+.endproc
+
+;*****************************************************************
+; Spawn ennemies
+;*****************************************************************
+.segment "CODE"
+
+.proc spawn_enemies
+	; Check if an ennemy can pop
+	ldx enemycooldown ; decrement enemy cool down
+	dex
+	stx enemycooldown
+	cpx #0
+	beq :+
+		rts
+	:
+
+	; TBD
+	ldx #1 ; set short cool down
+	stx enemycooldown
+	lda level ; get the current level
+	clc
+	adc #1 ; increment by 1
+	asl
+	asl ; multiply by 4 by shifting left twice
+	sta temp ; save our value
+	jsr rand ; get next random value
+	tay ; transfer the value into the y register
+	;lda temp ; get back our calculated value
+	cpy temp
+	bcc :+ ; continue if random value less than our calculated value
+		rts
+	:
+
+	ldx #20 ; set new cool down period
+	stx enemycooldown
+	; now see if the is an enemy object available
+	ldy #0 ; counter
+
+@loop:
+	lda enemydata,y
+	beq :+
+	iny ; increment counter
+	cpy #10
+	bne @loop
+		; did not find an enemy to use
+		rts
+	:
+	; mark the enemy as in use
+	lda #1
+	sta enemydata,y
+
+	; calculate first sprite oam position
+	tya
+	asl ; multiply by 16
+	asl
+	asl
+	asl
+	clc
+	adc #24 ; skip first six sprites
+	tax
+
+	; now setup the enemy sprite
+	; set the Y position (byte 0) of all four parts of the player ship
+	lda #0
+	sta oam,x
+	sta oam+4,x
+	lda #8
+	sta oam+8,x
+	sta oam+12,x
+	; set the index number (byte 1) of the sprite pattern
+	lda #8
+	sta oam+1,x
+	clc
+	adc #1
+	sta oam+5,x
+	adc #1
+	sta oam+9,x
+	adc #1
+	sta oam+13,x
+	; set the sprite attributes (byte 2)
+	lda #%00000000
+	sta oam+2,x
+	sta oam+6,x
+	sta oam+10,x
+	sta oam+14,x
+	; set the X position (byte 3)  of all four parts of the player ship
+	jsr rand
+	and #%11110000
+	clc
+	adc #48
+	sta oam+3,x
+	sta oam+11,x
+	clc
+	adc #8
+	sta oam+7,x
+	sta oam+15,x
+
+	rts
+.endproc
+
+;*****************************************************************
+; Move ennemies downward
+;*****************************************************************
+.segment "CODE"
+
+.proc move_enemies
+	ldy #0
+	lda #0
+@loop:
+	lda enemydata,y
+	beq @skip
+
+	; enemy is on screen
+	; calculate first sprite oam position
+	tya
+	asl ; multiply by 16
+	asl
+	asl
+	asl
+	clc
+	adc #24 ; skip first five sprites
+	tax
+
+	lda oam,x ; get enemy Y
+	clc
+	adc #1 ; move down screen
+	cmp #196
+	bcc @nohitbottom
+	; has reached the ground
+	lda #255
+	sta oam,x ; hide all sprites
+	sta oam+4,x
+	sta oam+8,x
+	sta oam+12,x
+	lda #0 ; clear the enemies in use flag
+	sta enemydata,y
+	jmp @skip
+
+	@nohitbottom:
+	sta oam,x ; save the new Y position
+	sta oam+4,x
+	clc
+	adc #8
+	sta oam+8,x
+	sta oam+12,x
+
+@skip:
+	iny ; goto to next enemy
+	cpy #10
+	bne @loop
+
+	rts
+.endproc
+
+
+;*****************************************************************
 ; Display Title Screen
 ;*****************************************************************
 .segment "ZEROPAGE"

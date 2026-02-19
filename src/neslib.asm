@@ -234,3 +234,66 @@ loop:
 exit:
 	rts                     ; Exit subroutine
 .endproc
+
+;*****************************************************************
+; randomize: Get a random value from the current SEED values
+;*****************************************************************
+
+.segment "ZEROPAGE"
+
+SEED0: .res 2
+SEED2: .res 2
+
+; simple shift based random number
+.segment "CODE"
+.proc randomize
+	lda SEED0
+	lsr
+	rol SEED0+1
+	bcc @noeor
+	eor #$B4
+@noeor:
+	sta SEED0
+	eor SEED0+1
+	rts
+.endproc
+
+; Linear Frequency random numbers
+; result in a (lo) and y (hi)
+.proc rand
+	jsr rand64k	; Factors of 65536: 3 5 17 257
+	jsr rand32k ; Factors of 32767; 7 31 151
+	lda SEED0+1	; combine other seed values
+	eor SEED2+1
+	tay	; save hi byte
+	lda SEED0	; mix up lowbytes of SEED0
+	eor SEED2	; and SEED2 to combine both
+	rts
+.endproc
+
+.proc rand64k
+	lda SEED0+1
+	asl
+	asl
+	eor SEED0+1
+	asl
+	eor SEED0+1
+	asl
+	asl
+	eor SEED0+1
+	asl
+	rol SEED0	; shift this left, "random" bit comes from low
+	rol SEED0+1
+	rts
+.endproc
+
+.proc rand32k
+	lda SEED2+1
+	asl
+	eor SEED2+1
+	asl
+	asl
+	ror SEED2	; shift this right, random bit comes from high
+	rol SEED2+1
+	rts
+.endproc
