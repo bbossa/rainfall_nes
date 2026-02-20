@@ -321,6 +321,10 @@ ch2:	.res 1 ; object 2 height
 	clc
 	lda cx1 ; get object 1 x
 	adc cw1 ; add object 1 width
+	BCC :+
+		clc
+		lda #$FF
+	:
 	cmp cx2 ; is object 2 to the right of object 1 plus it's width?
 	bcc @exit
 	clc

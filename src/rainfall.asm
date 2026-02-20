@@ -712,10 +712,12 @@ not_gamepad_right:
 
 	; setup for collision detection with player
 	lda oam ; get cloud Y position
+	clc
+	adc #5
 	sta cy1
 	lda oam+3 ; get cloud x position
 	sta cx1
-	lda #16 ; cloud is 16 pixel height 
+	lda #9 ; cloud is 16 pixel height 
 	sta ch1
 	lda #24 ; bullet is 24 pixel wide
 	sta cw1
@@ -768,11 +770,16 @@ not_gamepad_right:
 
 	; Detection with player
 	lda oam,x ; get enemy y position
+	clc
+	adc #1
 	sta cy2
 	lda oam+3,x ; get enemy x position
+	clc
+	adc #3
 	sta cx2
-	lda #16 ; set enemy width and height
+	lda #10 ; set enemy width
 	sta cw2
+	lda #17 ; set enemy height
 	sta ch2
 	jsr collision_test
 	bcc @skip
@@ -922,10 +929,12 @@ not_gamepad_right:
 
 	; setup for collision detection with player
 	lda oam ; get cloud Y position
+	clc
+	adc #5
 	sta cy1
 	lda oam+3 ; get cloud x position
 	sta cx1
-	lda #16 ; cloud is 16 pixel height 
+	lda #9 ; cloud is 16 pixel height 
 	sta ch1
 	lda #24 ; bullet is 24 pixel wide
 	sta cw1
@@ -977,11 +986,16 @@ not_gamepad_right:
 
 	; Detection with player
 	lda oam,x ; get enemy y position
+	clc
+	adc #1 ; first row is empty
 	sta cy2
 	lda oam+3,x ; get enemy x position
+	clc
+	adc #2
 	sta cx2
-	lda #16 ; set enemy width and height
+	lda #11 ; set enemy width 
 	sta cw2
+	lda #10 ; set enemy height
 	sta ch2
 	jsr collision_test
 	bcc @skip
@@ -1130,10 +1144,12 @@ not_gamepad_right:
 .proc move_bolt
 	; setup for collision detection with player
 	lda oam ; get cloud Y position
+	clc
+	adc #5
 	sta cy1
 	lda oam+3 ; get cloud x position
 	sta cx1
-	lda #16 ; cloud is 16 pixel height 
+	lda #9 ; cloud is 16 pixel height 
 	sta ch1
 	lda #24 ; bullet is 24 pixel wide
 	sta cw1
@@ -1187,9 +1203,12 @@ not_gamepad_right:
 	lda oam,x ; get enemy y position
 	sta cy2
 	lda oam+3,x ; get enemy x position
+	clc
+	adc #3		; Add with carry - Bolt sprite has 3 first column empty.
 	sta cx2
-	lda #16 ; set enemy width and height
+	lda #10 ; set enemy width
 	sta cw2
+	lda #15 ; set enemy width
 	sta ch2
 	jsr collision_test
 	bcc @skip
