@@ -348,3 +348,57 @@ ch2:	.res 1 ; object 2 height
 	clc ; clear carry flag and exit
 	rts
 .endproc
+
+;*****************************************************************
+;  0-99 Decimal to digit conversion
+;  A = number to convert
+; Outputs:
+; X = decimal tens
+; A = decimal ones
+;*****************************************************************
+.segment "CODE"
+
+.proc dec99_to_bytes
+    ldx    #0
+    cmp    #50                   ; A = 0-99
+    bcc    try20
+    sbc    #50
+    ldx    #5
+    bne    try20                ; always branch
+
+div20:
+    inx
+    inx
+    sbc    #20
+
+try20:
+    cmp    #20
+    bcs    div20
+
+try10:
+    cmp    #10
+    bcc    @finished
+    sbc    #10
+    inx
+
+@finished:
+	; X = decimal tens
+	; A = decimal ones
+
+	rts
+.endproc
+
+.proc clear_sprites
+	; place all sprites offscreen at Y=255
+	lda #255
+	ldx #0
+clear_oam:
+	sta oam,x
+	inx
+	inx
+	inx
+	inx
+	bne clear_oam
+
+	rts
+.endproc

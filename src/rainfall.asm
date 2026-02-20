@@ -74,6 +74,9 @@ heartcooldown: .res 1
 boltcooldown: .res 1
 temp: .res 10
 bottom_line: .res 1
+score: .res 3
+update: .res 1
+highscore: .res 3
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -297,6 +300,16 @@ loop:
 	cpx #32						; Compare to 32 (is lower than 32, C and Z flag will be set to 0)
 	bcc loop					; Branch on Carry Clear - Jump to loop section until Carry Flag (C) is set (when X is equal or hiher than 32)
 
+	lda #%00000001 ; has the score updated?
+	bit update
+	beq @skipscore
+		
+	jsr display_score ; display score
+	lda #%11111110 ; reset score update flag
+	and update
+	sta update
+@skipscore:
+
 	; Disable scrolling
 	lda #0
 	sta PPU_VRAM_ADDRESS1
@@ -337,6 +350,11 @@ irq:
  .segment "CODE"
  .proc main
  	; main application - rendering is currently off
+ 	lda #0 ; set initial high score to 000
+	sta highscore
+	sta highscore+1
+	sta highscore+2
+
 
 	; initialize palette table
  	ldx #0					; Load X with 0
@@ -385,6 +403,11 @@ titleloop:
 	lda #1					; Load A with value 1
 	sta level				; Store into level (level 1 for difficulty)
 	jsr setup_level			; Setup level
+
+	lda #0 ; reset the player's score
+	sta score
+	sta score+1
+	sta score+2
 
 	; draw the game screen
 	jsr display_game_screen
@@ -793,12 +816,78 @@ not_gamepad_right:
 	lda #0 ; clear enemy's data flag
 	sta enemydata,y
 
+	lda #1
+	jsr add_score
+
 @skip:
 	iny 				; Increment Y goto to next enemy
 	cpy #10				; Compare Y with 10
 	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
 
 	rts					; exit
+.endproc
+
+;*****************************************************************
+; add_score: Add to the players score
+; Parameters:
+; a = value to add to the score
+;*****************************************************************
+.segment "CODE"
+.proc add_score
+	clc
+	adc score ; add the value in a to the 1st byte of the score
+	sta score
+	cmp #100
+	bcc @skip
+
+	sec ; 1st byte has exceeded 99, handle overflow
+	sbc #100
+	sta score
+	inc score+1
+	lda score+1
+	cmp #100
+	bcc @skip
+
+	sec ; 2nd byte has exceeded 99, handle overflow
+	sbc #100
+	sta score+1
+	inc score+2
+	lda score+2
+	cmp #100
+	bcc @skip
+	sec ; if 3rd byte has exceeded 99, adjust and discard overflow
+	sbc #100
+	sta score+2
+	
+@skip:
+	lda #%000000001 ; set flag to write score to the screen
+	ora update
+	sta update
+
+	lda highscore+2
+	cmp score+2
+	bcc @highscore
+	bne @nothighscore
+
+	lda highscore+1
+	cmp score+1
+	bcc @highscore
+	bne @nothighscore
+
+	lda highscore
+	cmp score
+	bcs @nothighscore
+
+@highscore:
+	lda score
+	sta highscore
+	lda score+1
+	sta highscore+1
+	lda score+2
+	sta highscore+2
+
+@nothighscore:
+	rts
 .endproc
 
 ;*****************************************************************
@@ -1230,6 +1319,42 @@ not_gamepad_right:
 	rts					; exit
 .endproc
 
+;*****************************************************************
+; display_score: Write the score to the screen
+;*****************************************************************
+.segment "CODE"
+
+.proc display_score
+	vram_set_address (NAME_TABLE_0_ADDRESS + 28 * 32 + 7)
+
+	lda score+2 ; transform each decimal digit of the score
+	jsr dec99_to_bytes
+	stx temp
+	sta temp+1
+
+	lda score+1
+	jsr dec99_to_bytes
+	stx temp+2
+	sta temp+3
+
+	lda score
+	jsr dec99_to_bytes
+	stx temp+4
+	sta temp+5
+
+	ldx #0 ; write the six characters to the screen
+@loop:
+	lda temp,x
+	clc
+	adc #48
+	sta PPU_VRAM_IO
+	inx
+	cpx #6
+	bne @loop
+	
+	vram_clear_address
+	rts
+.endproc
 
 ;*****************************************************************
 ; Display Title Screen
