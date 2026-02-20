@@ -297,3 +297,50 @@ SEED2: .res 2
 	rol SEED2+1
 	rts
 .endproc
+
+;*****************************************************************
+; collision_test: Check whether two objects have hit each other
+; Returns: Carry flag set if objects have hit each other
+;*****************************************************************
+
+.segment "ZEROPAGE"
+
+cx1:	.res 1 ; object 1 X position
+cy1:	.res 1 ; object 1 Y position
+cw1:	.res 1 ; object 1 width
+ch1:	.res 1 ; object 1 height
+
+cx2:	.res 1 ; object 2 X position
+cy2:	.res 1 ; object 2 Y position
+cw2:	.res 1 ; object 2 width
+ch2:	.res 1 ; object 2 height
+
+.segment "CODE"
+
+.proc collision_test
+	clc
+	lda cx1 ; get object 1 x
+	adc cw1 ; add object 1 width
+	cmp cx2 ; is object 2 to the right of object 1 plus it's width?
+	bcc @exit
+	clc
+	lda cx2 ; get object 2 x
+	adc cw2 ; add object 2 width
+	cmp cx1 ; is object 2 to the left of object 1?
+	bcc @exit
+	lda cy1 ; get object 1 y
+	adc ch1 ; add object 1 height
+	cmp cy2 ; is object 2 below object 1 plus it's height?
+	bcc @exit
+	clc
+	lda cy2 ; get object 2 y
+	adc ch2 ; add object 2 height
+	cmp cy1 ; is object 2 above object 1?
+	bcc @exit
+
+	sec ; we have hit, set carry flag and exit
+	rts
+@exit:
+	clc ; clear carry flag and exit
+	rts
+.endproc

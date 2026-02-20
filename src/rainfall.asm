@@ -67,8 +67,13 @@ lasttime: .res 1
 level: .res 1
 animate: .res 1
 enemydata: .res 10
+heardata: .res 2
+boltdata: .res 1
 enemycooldown: .res 1
+heartcooldown: .res 1
+boltcooldown: .res 1
 temp: .res 10
+bottom_line: .res 1
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -365,80 +370,86 @@ titleloop:
 	beq titleloop			; Branch on Equal - Branch is zero flag is set - If A or Start is not presses, then result is 0 (any other button can be pressed)
 
 	; set our random seed based on the time counter since the splash screen was displayed
-	lda time
-	sta SEED0
-	lda time+1
-	sta SEED0+1
-	jsr randomize
-	sbc time+1
-	sta SEED2   
-	jsr randomize
-	sbc time
-	sta SEED2+1
+	lda time				; Load A with value of time
+	sta SEED0				; Store time value inbto first seed
+	lda time+1				; Get higher byte
+	sta SEED0+1				; Store into high byte of seed0
+	jsr randomize			; Call randomize routine
+	sbc time+1				; Substract with carry
+	sta SEED2   			; Store into seed2
+	jsr randomize			; Call randomize routine
+	sbc time				; subtract wih carry
+	sta SEED2+1				; Store into high byte of seed2
 
 	; set up ready for a new game
-	lda #1
-	sta level
-	jsr setup_level
+	lda #1					; Load A with value 1
+	sta level				; Store into level (level 1 for difficulty)
+	jsr setup_level			; Setup level
 
 	; draw the game screen
 	jsr display_game_screen
 
 	; display the player's cloud
 	; set the Y position (byte 0) of all six parts of the player cloud
-	lda #196
-	sta oam
-	sta oam+4
-	sta oam+8
-	lda #204	; 196 + 8
-	sta oam+12
-	sta oam+16
-	sta oam+20
-	; Set index number (byte 1) of the sprite pattern
-	ldx #0
-	stx oam+1
-	inx
-	stx oam+5
-	inx
-	stx oam+9
-	inx
-	stx oam+13
-	inx
-	stx oam+17
-	inx
-	stx oam+21
+	; A sprite is defined with 4 bytes 0 1 2 3 - Y, Index, Attributes, X 
+	lda #196 		; Define Y position (pixel)
+	sta oam			; Store into sprite 1 (top left)
+	sta oam+4 		; Store into sprite 2 (top middle)
+	sta oam+8 		; Store into sprite 3 (top right)
+	lda #204		; 196 + 8 (increase position by sprite height)
+	sta oam+12		; Store into sprite 4 (bottom left)
+	sta oam+16		; Store into sprite 5 (bottom middle)
+	sta oam+20		; Store into sprite 6 (bottom right)
+
+	; Set index number (byte 1) of the sprite pattern (which sprite to use in CHR)
+	ldx #0			; First index: 0
+	stx oam+1		; Store into sprite 1 (top left) (byte 0 + 1)
+	inx				; increment X (index 1)
+	stx oam+5		; Store into sprite 2 (top middle)
+	inx				; increment X (index 2)
+	stx oam+9		; Store into sprite 3 (top right)
+	inx				; increment X (index 3)
+	stx oam+13		; Store into sprite 4 (bottom left)
+	inx				; increment X (index 4)
+	stx oam+17		; Store into sprite 5 (bottom middle)
+	inx				; increment X (index 5)
+	stx oam+21		; Store into sprite 6 (bottom right)
+
 	; set the sprite attributes (byte 2)
-	lda #%00000000
-	sta oam+2
-	sta oam+6
-	sta oam+10
-	sta oam+14
-	sta oam+18
-	sta oam+22
+	lda #%00000000	; Load A with 0 mask
+	sta oam+2		; Store into sprite 1 (top left) (byte 0 + 2)
+	sta oam+6		; Store into sprite 2 (top middle)
+	sta oam+10		; Store into sprite 3 (top right)
+	sta oam+14		; Store into sprite 4 (bottom left)
+	sta oam+18		; Store into sprite 5 (bottom middle)
+	sta oam+22		; Store into sprite 6 (bottom right)
 
 	; set the X position (byte 3)  of all six parts of the player cloud
-	lda #112
-	sta oam+3
-	sta oam+15
-	lda #120 ; 120
-	sta oam+7
-	sta oam+19
-	lda #128 ; 120 + 8
-	sta oam+11
-	sta oam+23
+	; middle is around 120 : 112 <- 120 -> 128
+	lda #112		; Load A with left sprite position (120-8)
+	sta oam+3		; Store into sprite 1 (top left) (byte 0 + 3)
+	sta oam+15		; Store into sprite 4 (bottom left)
+	lda #120 		; Load A with middle position (120)
+	sta oam+7		; Store into sprite 2 (top middle)
+	sta oam+19		; Store into sprite 5 (bottom middle)
+	lda #128 		; Load A with right sprite position (120+8)
+	sta oam+11		; Store into sprite 3 (top right)
+	sta oam+23		; Store into sprite 6 (bottom right)
 
+	; Draw sprites
 	jsr ppu_update
 
 
 mainloop:
+	; Load current time (based on number of drame displayed - 60 for NTSC and 50 for PAL)
 	lda time
 
 	; ensure the time has actually changed
-	cmp lasttime
-	beq mainloop
+	cmp lasttime		; CMP withn returne zero flag set if last time equal time, carry flag is set if time is greater or equal to lasttime, zero bit is set if time is lower than lasttime
+	beq mainloop		; Branch on Equal - If the zero flag is set, BEQ branches -> till time equal lastime, branch.
 
 	; time has changed update the lasttime value
-	sta lasttime
+	sta lasttime		; Copyr current time to lasttime
 
 	; Check user input
 	jsr player_actions
@@ -447,10 +458,17 @@ mainloop:
 	jsr spawn_enemies
 	jsr move_enemies
 
+	; Spawn and move powerup
+	jsr spawn_heart
+	jsr move_heart
+	jsr spawn_bolt
+	jsr move_bolt
+
 	; ensure our changes are rendered
  	lda #1
  	sta nmi_ready
 
+	; Main loop
 	jmp mainloop
 
  .endproc
@@ -519,17 +537,51 @@ not_gamepad_right:
 ;*****************************************************************
 .segment "CODE"
 
-.proc setup_level 	
-	lda #0 ; clear enemy data
-	ldx #0
+.proc setup_level 
+	; CLear enmy data
+	lda #0 				; Load A with 0
+	ldx #0				; Load X with 0
 @loop:
-	sta enemydata,x
-	inx
-	cpx #10
-	bne @loop
-	lda #20 ; set initial enemy cool down
-	sta enemycooldown
-	rts
+	sta enemydata,x		; Set 0 to enemy list (10 byte, one per enemy)
+	inx					; Increment X
+	cpx #10				; Compare to 10
+	bne @loop			; Branch if Not Equal - If zero flag flag is clear branch -> CPX return zero flag set until X equal 10
+
+	; set initial enemy cool down
+	lda #50 			; Load A with 50 (time before to pop a new ennemy) (~1s)
+	sta enemycooldown	; Store into cooldown adress
+
+	; Clear powerup data (heart)
+	lda #0				; Load A with 0
+	ldx #0				; Load X with 0
+@loop1:
+	sta heardata,x		; Set 0 to heart list (3 byte, one per heart)
+	inx					; Increment X
+	cpx #2				; Branch if Not Equal - If zero flag flag is clear branch -> CPX return zero flag set until X equal 2
+	bne @loop1
+
+	; set initial heart powerup cooldown
+	lda #100
+	sta heartcooldown
+
+	; Clear powerup data (bolt)
+	lda #0				; Load A with 0
+	ldx #0				; Load X with 0
+@loop2:
+	sta boltdata,x		; Set 0 to heart list (2 byte, one per heart)
+	inx					; Increment X
+	cpx #1				; Branch if Not Equal - If zero flag flag is clear branch -> CPX return zero flag set until X equal 1
+	bne @loop2
+
+	; set initial heart powerup cooldown
+	lda #200
+	sta boltcooldown
+
+	; Set botom line Y
+	lda #216
+	sta bottom_line
+
+	rts					; exit subroutine			
 .endproc
 
 ;*****************************************************************
@@ -539,96 +591,116 @@ not_gamepad_right:
 
 .proc spawn_enemies
 	; Check if an ennemy can pop
-	ldx enemycooldown ; decrement enemy cool down
-	dex
-	stx enemycooldown
-	cpx #0
-	beq :+
-		rts
+	ldx enemycooldown 		; Load X with ennemy cooldown value
+	dex						; Decrement X
+	stx enemycooldown		; Store ennemy cooldown wit new value
+	cpx #0					; Compare with 0
+	beq :+					; Branch on equal - If zero flag is set branch - CPX return a zero flag when X equal 0 -> skip rts instruction
+		rts					; Exit subroutine - not yet
 	:
 
-	; TBD
-	ldx #1 ; set short cool down
-	stx enemycooldown
-	lda level ; get the current level
-	clc
-	adc #1 ; increment by 1
-	asl
-	asl ; multiply by 4 by shifting left twice
-	sta temp ; save our value
-	jsr rand ; get next random value
-	tay ; transfer the value into the y register
-	;lda temp ; get back our calculated value
-	cpy temp
-	bcc :+ ; continue if random value less than our calculated value
-		rts
+	; Spawn an ennemy based on psuedo RNG
+	ldx #1 					; Load X with 1
+	stx enemycooldown		; Store it into enemy cooldown -> to rpevent an error for the next call of this subroutine (next call will decrease cooldown by 1)
+
+	lda level 				; Load A with current level
+	clc						; Clear Carry flag
+	adc #1 					; Add with Carry - increment by 1 the level
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
+	; +--> Result A is multiply by 4
+	sta temp 				; Store A into temp adress - save our value
+	jsr rand 				; Call rand routine - get next random value
+	tay 					; transfer A into Y
+	cpy temp				; Compare Y with temp (i.e. (lvl +1 ) * 4)
+	; continue if random value less than our calculated value
+	bcc :+ 					; Branch if Carry Clear - CPY set carry flag is Y >= M. If random value is less than our difficulty value an ennemy pop, other xise exit
+		rts					; exit
 	:
 
-	ldx #20 ; set new cool down period
-	stx enemycooldown
-	; now see if the is an enemy object available
-	ldy #0 ; counter
+	; An ennemy pop - Reset cooldown value to intial value
+	ldx #20 				; Load A with 20 - set new cool down period
+	stx enemycooldown		; Store A into cooldown adress
+	
+	; Check if an ennemy can be displayed (max 10 ennemy on screen)
+	ldy #0 					; Load Y with 0 - counter of enemy list
 
 @loop:
-	lda enemydata,y
-	beq :+
-	iny ; increment counter
-	cpy #10
-	bne @loop
+	lda enemydata,y			; Load A with ennemy Y
+	beq :+					; Branch on equal - If zero flag is set branch - Zero flag means ennmy is available (zero value). :+ means branch to next unlabeled tag
+	iny 					; increment counter
+	cpy #10					; Compare to 10 - max ennemy list
+	bne @loop				; Branch if Not Equal - If zero flag flag is clear branch -> Y equal 10
 		; did not find an enemy to use
-		rts
+		rts					; After the loop if no enenmy is available, exit
 	:
+
 	; mark the enemy as in use
-	lda #1
-	sta enemydata,y
+	lda #1					; Load A with 1
+	sta enemydata,y			; Store into ennemy byte
 
 	; calculate first sprite oam position
-	tya
-	asl ; multiply by 16
-	asl
-	asl
-	asl
-	clc
-	adc #24 ; skip first six sprites
-	tax
+	; Each enemy use 4 sprites (4 bytes eache). We must defines the first index of sprites in OAM based on enemy index:
+	; Ennemy 0: 0
+	; Ennemy 1: 16
+	; ennemy 2: 32
+	; ...
+	; position on ennemy n: n * 16
+	tya						; Transfert Y to A - Get current ennemy index
+	; multiply by 16
+	asl 					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x4) 
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x8)
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x16)
+
+	; The first 6 sprites are used by the player cloud. Each sprites takes 4 bytes. The position is then shifted by 24 (6 x 4)
+	; Ennemy 0 -> position 24 in OAM; Ennemy 1 -> position 36 ...
+	clc						; Clear Carry flag
+	adc #24 				; Add with Carry - shift OAM position by 24
+	tax						; Transfert A to X
 
 	; now setup the enemy sprite
 	; set the Y position (byte 0) of all four parts of the player ship
-	lda #0
-	sta oam,x
-	sta oam+4,x
-	lda #8
-	sta oam+8,x
-	sta oam+12,x
+	lda #0					; Load A with 0 (top position Y)
+	sta oam,x				; Sprite 1
+	sta oam+4,x				; Sprite 2
+	lda #8					; Load A with 8 (bottom line of sprites)
+	sta oam+8,x				; sprite 3
+	sta oam+12,x			; sprite 4
+	
 	; set the index number (byte 1) of the sprite pattern
-	lda #8
-	sta oam+1,x
-	clc
-	adc #1
-	sta oam+5,x
-	adc #1
-	sta oam+9,x
-	adc #1
-	sta oam+13,x
+	lda #6 					; Set Sprite index (6 in CHR)
+	sta oam+1,x				; Sprite 1	
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+5,x				; Sprite 2
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+9,x				; Sprite 3
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+13,x			; Sprite 4
+	
 	; set the sprite attributes (byte 2)
-	lda #%00000000
-	sta oam+2,x
-	sta oam+6,x
-	sta oam+10,x
-	sta oam+14,x
-	; set the X position (byte 3)  of all four parts of the player ship
-	jsr rand
-	and #%11110000
-	clc
-	adc #48
-	sta oam+3,x
-	sta oam+11,x
-	clc
-	adc #8
-	sta oam+7,x
-	sta oam+15,x
+	lda #%00000001			; Load A with 00000001 mask (palette 1)
+	sta oam+2,x				; Sprite 1
+	sta oam+6,x				; Sprite 2
+	sta oam+10,x			; Sprite 3
+	sta oam+14,x			; Sprite 4
 
-	rts
+	; set the X position (byte 3)  of all four parts of the player ship
+	jsr rand				; Call Random routine
+	and #%11110000			; AND to get only higher bits
+	clc						; Carry clear
+	adc #48					; Add with carry (+48)
+	sta oam+3,x				; Sprite 1
+	sta oam+11,x			; Sprite 3
+	clc						; Carry clear
+	adc #8					; Add with carry (+8)
+	sta oam+7,x				; Sprite 2
+	sta oam+15,x			; Sprite 4
+
+	rts						; Exit
 .endproc
 
 ;*****************************************************************
@@ -637,52 +709,506 @@ not_gamepad_right:
 .segment "CODE"
 
 .proc move_enemies
-	ldy #0
-	lda #0
+
+	; setup for collision detection with player
+	lda oam ; get cloud Y position
+	sta cy1
+	lda oam+3 ; get cloud x position
+	sta cx1
+	lda #16 ; cloud is 16 pixel height 
+	sta ch1
+	lda #24 ; bullet is 24 pixel wide
+	sta cw1
+
+
+	ldy #0				; Load Y with 0
+	lda #0				; Load X with 0
 @loop:
-	lda enemydata,y
-	beq @skip
+	lda enemydata,y		; Get ennemy Y in list
+	beq @skip			; Branch on Equal - Branch if zero flag is set - if ennemy is not used branch to skip
 
 	; enemy is on screen
 	; calculate first sprite oam position
-	tya
-	asl ; multiply by 16
-	asl
-	asl
-	asl
-	clc
-	adc #24 ; skip first five sprites
-	tax
+	tya					; Transfert Y to A
+	; Compute OAM index (index x 16)
+	asl 				; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	clc					; Clear Carry flag
+	adc #24 			; Add with Carry (+24) - shift OAM position already used by player cloud
+	tax					; Transfert A to X
 
-	lda oam,x ; get enemy Y
-	clc
-	adc #1 ; move down screen
-	cmp #196
-	bcc @nohitbottom
+	; Get current Y position
+	lda oam,x 			; Load A with enemy Y
+	clc					; Clear Carry flag
+	adc #1 				; Add with carry (+1)
+	cmp bottom_line			; Compare with bottom virtual line position
+	bcc @nohitbottom	; Branch on Carry Clear - Till position is lower than virtual bottom line, the carry flag is not set
 	; has reached the ground
-	lda #255
-	sta oam,x ; hide all sprites
-	sta oam+4,x
-	sta oam+8,x
-	sta oam+12,x
-	lda #0 ; clear the enemies in use flag
-	sta enemydata,y
-	jmp @skip
+	lda #255			; Load A with 255 (this specific psoition indicate that sprite is not in use)
+	sta oam,x 			; Store new Y position to sprite (hide all sprites)
+	sta oam+4,x			; sprite 2
+	sta oam+8,x			; sprite 3
+	sta oam+12,x		; sprite 4
+
+	; clear the enemies in use flag
+	lda #0 				; Load A with 0
+	sta enemydata,y		; Set use flag
+	jmp @skip			; skip next part
 
 	@nohitbottom:
-	sta oam,x ; save the new Y position
+	; save the new Y position
+	sta oam,x 			; Sprite 1
+	sta oam+4,x			; sprite 2
+	clc					; Clear Carry flag
+	adc #8				; Add 8
+	sta oam+8,x			; sprite 3
+	sta oam+12,x		; sprite 4
+
+	; Detection with player
+	lda oam,x ; get enemy y position
+	sta cy2
+	lda oam+3,x ; get enemy x position
+	sta cx2
+	lda #16 ; set enemy width and height
+	sta cw2
+	sta ch2
+	jsr collision_test
+	bcc @skip
+
+	; Player hit ennemy
+	lda #$ff
+	sta oam,x ; erase enemy
 	sta oam+4,x
-	clc
-	adc #8
 	sta oam+8,x
 	sta oam+12,x
+	lda #0 ; clear enemy's data flag
+	sta enemydata,y
 
 @skip:
-	iny ; goto to next enemy
-	cpy #10
-	bne @loop
+	iny 				; Increment Y goto to next enemy
+	cpy #10				; Compare Y with 10
+	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
 
-	rts
+	rts					; exit
+.endproc
+
+;*****************************************************************
+; Spawn Heart
+;*****************************************************************
+.segment "CODE"
+
+.proc spawn_heart
+	; Check if an heart can pop
+	ldx heartcooldown 		; Load X with heart cooldown value
+	dex						; Decrement X
+	stx heartcooldown		; Store heart cooldown wit new value
+	cpx #0					; Compare with 0
+	beq :+					; Branch on equal - If zero flag is set branch - CPX return a zero flag when X equal 0 -> skip rts instruction
+		rts					; Exit subroutine - not yet
+	:
+
+	; Spawn an heart based on psuedo RNG
+	ldx #1 					; Load X with 1
+	stx heartcooldown		; Store it into heart cooldown -> to rpevent an error for the next call of this subroutine (next call will decrease cooldown by 1)
+
+	lda #1	 				; Load A with current level
+	clc						; Clear Carry flag
+	adc #1 					; Add with Carry - increment by 1 the level
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
+	; +--> Result A is multiply by 4
+	sta temp 				; Store A into temp adress - save our value
+	jsr rand 				; Call rand routine - get next random value
+	tay 					; transfer A into Y
+	cpy temp				; Compare Y with temp (i.e. (lvl +1 ) * 4)
+	; continue if random value less than our calculated value
+	bcc :+ 					; Branch if Carry Clear - CPY set carry flag is Y >= M. If random value is less than our difficulty value an heart pop, other xise exit
+		rts					; exit
+	:
+
+	; An heart pop - Reset cooldown value to intial value
+	ldx #20 				; Load A with 20 - set new cool down period
+	stx heartcooldown		; Store A into cooldown adress
+	
+	; Check if an ennemy can be displayed (max 3 heart on screen)
+	ldy #0 					; Load Y with 0 - counter of heart list
+
+@loop:
+	lda heardata,y			; Load A with ennemy Y
+	beq :+					; Branch on equal - If zero flag is set branch - Zero flag means ennmy is available (zero value). :+ means branch to next unlabeled tag
+	iny 					; increment counter
+	cpy #2					; Compare to 3 - max ennemy list
+	bne @loop				; Branch if Not Equal - If zero flag flag is clear branch -> Y equal 3
+		; did not find an heart to use
+		rts					; After the loop if no enenmy is available, exit
+	:
+
+	; mark the heart as in use
+	lda #1					; Load A with 1
+	sta heardata,y			; Store into ennemy byte
+
+	; calculate first sprite oam position
+	; Each heart use 4 sprites (4 bytes eache). We must defines the first index of sprites in OAM based on heart index:
+	; Ennemy 0: 0
+	; Ennemy 1: 16
+	; ennemy 2: 32
+	; ...
+	; position on ennemy n: n * 16
+	tya						; Transfert Y to A - Get current ennemy index
+	; multiply by 16
+	asl 					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x4) 
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x8)
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x16)
+
+	; The first 6 sprites are used by the player cloud. Each sprites takes 4 bytes. The position is then shifted by 24 ((6+40) x 4)
+	; Ennemy 0 -> position 24 in OAM; Ennemy 1 -> position 36 ...
+	clc						; Clear Carry flag
+	adc #184 				; Add with Carry - shift OAM position by 24
+	tax						; Transfert A to X
+
+	; now setup the heart sprite
+	; set the Y position (byte 0) of all four parts of the player ship
+	lda #0					; Load A with 0 (top position Y)
+	sta oam,x				; Sprite 1
+	sta oam+4,x				; Sprite 2
+	lda #8					; Load A with 8 (bottom line of sprites)
+	sta oam+8,x				; sprite 3
+	sta oam+12,x			; sprite 4
+	
+	; set the index number (byte 1) of the sprite pattern
+	lda #10 					; Set Sprite index (10 in CHR)
+	sta oam+1,x				; Sprite 1	
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+5,x				; Sprite 2
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+9,x				; Sprite 3
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+13,x			; Sprite 4
+	
+	; set the sprite attributes (byte 2)
+	lda #%00000010			; Load A with 00000010 mask
+	sta oam+2,x				; Sprite 1
+	sta oam+6,x				; Sprite 2
+	sta oam+10,x			; Sprite 3
+	sta oam+14,x			; Sprite 4
+
+	; set the X position (byte 3)  of all four parts of the player ship
+	jsr rand				; Call Random routine
+	and #%11110000			; AND to get only higher bits
+	clc						; Carry clear
+	adc #48					; Add with carry (+48)
+	sta oam+3,x				; Sprite 1
+	sta oam+11,x			; Sprite 3
+	clc						; Carry clear
+	adc #8					; Add with carry (+8)
+	sta oam+7,x				; Sprite 2
+	sta oam+15,x			; Sprite 4
+
+	rts						; Exit
+.endproc
+
+;*****************************************************************
+; Move heart downward
+;*****************************************************************
+.segment "CODE"
+
+.proc move_heart
+
+	; setup for collision detection with player
+	lda oam ; get cloud Y position
+	sta cy1
+	lda oam+3 ; get cloud x position
+	sta cx1
+	lda #16 ; cloud is 16 pixel height 
+	sta ch1
+	lda #24 ; bullet is 24 pixel wide
+	sta cw1
+
+	ldy #0				; Load Y with 0
+	lda #0				; Load X with 0
+@loop:
+	lda heardata,y		; Get ennemy Y in list
+	beq @skip			; Branch on Equal - Branch if zero flag is set - if ennemy is not used branch to skip
+
+	; enemy is on screen
+	; calculate first sprite oam position
+	tya					; Transfert Y to A
+	; Compute OAM index (index x 16)
+	asl 				; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	clc					; Clear Carry flag
+	adc #184 			; Add with Carry (+24) - shift OAM position already used by player cloud
+	tax					; Transfert A to X
+
+	; Get current Y position
+	lda oam,x 			; Load A with enemy Y
+	clc					; Clear Carry flag
+	adc #1 				; Add with carry (+1)
+	cmp bottom_line			; Compare with bottom virtual line position
+	bcc @nohitbottom	; Branch on Carry Clear - Till position is lower than virtual bottom line, the carry flag is not set
+	; has reached the ground
+	lda #255			; Load A with 255 (this specific psoition indicate that sprite is not in use)
+	sta oam,x 			; Store new Y position to sprite (hide all sprites)
+	sta oam+4,x			; sprite 2
+	sta oam+8,x			; sprite 3
+	sta oam+12,x		; sprite 4
+
+	; clear the enemies in use flag
+	lda #0 				; Load A with 0
+	sta heardata,y		; Set use flag
+	jmp @skip			; skip next part
+
+	@nohitbottom:
+	; save the new Y position
+	sta oam,x 			; Sprite 1
+	sta oam+4,x			; sprite 2
+	clc					; Clear Carry flag
+	adc #8				; Add 8
+	sta oam+8,x			; sprite 3
+	sta oam+12,x		; sprite 4
+
+	; Detection with player
+	lda oam,x ; get enemy y position
+	sta cy2
+	lda oam+3,x ; get enemy x position
+	sta cx2
+	lda #16 ; set enemy width and height
+	sta cw2
+	sta ch2
+	jsr collision_test
+	bcc @skip
+
+	; Player hit ennemy
+	lda #$ff
+	sta oam,x ; erase enemy
+	sta oam+4,x
+	sta oam+8,x
+	sta oam+12,x
+	lda #0 ; clear enemy's data flag
+	sta heardata,y
+
+@skip:
+	iny 				; Increment Y goto to next enemy
+	cpy #2			; Compare Y with 10
+	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
+
+	rts					; exit
+.endproc
+
+;*****************************************************************
+; Spawn Bolt
+;*****************************************************************
+.segment "CODE"
+
+.proc spawn_bolt
+	; Check if an heart can pop
+	ldx boltcooldown 		; Load X with heart cooldown value
+	dex						; Decrement X
+	stx boltcooldown		; Store heart cooldown wit new value
+	cpx #0					; Compare with 0
+	beq :+					; Branch on equal - If zero flag is set branch - CPX return a zero flag when X equal 0 -> skip rts instruction
+		rts					; Exit subroutine - not yet
+	:
+
+	; Spawn an heart based on psuedo RNG
+	ldx #1 					; Load X with 1
+	stx boltcooldown		; Store it into heart cooldown -> to rpevent an error for the next call of this subroutine (next call will decrease cooldown by 1)
+
+	lda #1	 				; Load A with current level
+	clc						; Clear Carry flag
+	adc #1 					; Add with Carry - increment by 1 the level
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
+	; +--> Result A is multiply by 4
+	sta temp 				; Store A into temp adress - save our value
+	jsr rand 				; Call rand routine - get next random value
+	tay 					; transfer A into Y
+	cpy temp				; Compare Y with temp (i.e. (lvl +1 ) * 4)
+	; continue if random value less than our calculated value
+	bcc :+ 					; Branch if Carry Clear - CPY set carry flag is Y >= M. If random value is less than our difficulty value an heart pop, other xise exit
+		rts					; exit
+	:
+
+	; An heart pop - Reset cooldown value to intial value
+	ldx #20 				; Load A with 20 - set new cool down period
+	stx boltcooldown		; Store A into cooldown adress
+	
+	; Check if an ennemy can be displayed (max 3 heart on screen)
+	ldy #0 					; Load Y with 0 - counter of heart list
+
+@loop:
+	lda boltdata,y			; Load A with ennemy Y
+	beq :+					; Branch on equal - If zero flag is set branch - Zero flag means ennmy is available (zero value). :+ means branch to next unlabeled tag
+	iny 					; increment counter
+	cpy #1					; Compare to 1 - max bolt list
+	bne @loop				; Branch if Not Equal - If zero flag flag is clear branch -> Y equal 3
+		; did not find an heart to use
+		rts					; After the loop if no enenmy is available, exit
+	:
+
+	; mark the heart as in use
+	lda #1					; Load A with 1
+	sta boltdata,y			; Store into ennemy byte
+
+	; calculate first sprite oam position
+	; Each heart use 4 sprites (4 bytes eache). We must defines the first index of sprites in OAM based on heart index:
+	; Ennemy 0: 0
+	; Ennemy 1: 16
+	; ennemy 2: 32
+	; ...
+	; position on ennemy n: n * 16
+	tya						; Transfert Y to A - Get current ennemy index
+	; multiply by 16
+	asl 					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x4) 
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x8)
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x16)
+
+	; The first 6 sprites are used by the player cloud. Each sprites takes 4 bytes. The position is then shifted by 24 ((6+40+3) x 4)
+	; Ennemy 0 -> position 24 in OAM; Ennemy 1 -> position 36 ...
+	clc						; Clear Carry flag
+	adc #216 				; Add with Carry - shift OAM position by 24
+	tax						; Transfert A to X
+
+	; now setup the heart sprite
+	; set the Y position (byte 0) of all four parts of the player ship
+	lda #0					; Load A with 0 (top position Y)
+	sta oam,x				; Sprite 1
+	sta oam+4,x				; Sprite 2
+	lda #8					; Load A with 8 (bottom line of sprites)
+	sta oam+8,x				; sprite 3
+	sta oam+12,x			; sprite 4
+	
+	; set the index number (byte 1) of the sprite pattern
+	lda #14					; Set Sprite index (14 in CHR)
+	sta oam+1,x				; Sprite 1	
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+5,x				; Sprite 2
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+9,x				; Sprite 3
+	clc						; Carry clear
+	adc #1					; Add with Carry (+1)
+	sta oam+13,x			; Sprite 4
+	
+	; set the sprite attributes (byte 2)
+	lda #%00000010			; Load A with 00000010 mask
+	sta oam+2,x				; Sprite 1
+	sta oam+6,x				; Sprite 2
+	sta oam+10,x			; Sprite 3
+	sta oam+14,x			; Sprite 4
+
+	; set the X position (byte 3)  of all four parts of the player ship
+	jsr rand				; Call Random routine
+	and #%11110000			; AND to get only higher bits
+	clc						; Carry clear
+	adc #48					; Add with carry (+48)
+	sta oam+3,x				; Sprite 1
+	sta oam+11,x			; Sprite 3
+	clc						; Carry clear
+	adc #8					; Add with carry (+8)
+	sta oam+7,x				; Sprite 2
+	sta oam+15,x			; Sprite 4
+
+	rts						; Exit
+.endproc
+
+;*****************************************************************
+; Move heart downward
+;*****************************************************************
+.segment "CODE"
+
+.proc move_bolt
+	; setup for collision detection with player
+	lda oam ; get cloud Y position
+	sta cy1
+	lda oam+3 ; get cloud x position
+	sta cx1
+	lda #16 ; cloud is 16 pixel height 
+	sta ch1
+	lda #24 ; bullet is 24 pixel wide
+	sta cw1
+
+	ldy #0				; Load Y with 0
+	lda #0				; Load X with 0
+@loop:
+	lda boltdata,y		; Get ennemy Y in list
+	beq @skip			; Branch on Equal - Branch if zero flag is set - if ennemy is not used branch to skip
+
+	; enemy is on screen
+	; calculate first sprite oam position
+	tya					; Transfert Y to A
+	; Compute OAM index (index x 16)
+	asl 				; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	clc					; Clear Carry flag
+	adc #216			; Add with Carry (+24) - shift OAM position already used by player cloud
+	tax					; Transfert A to X
+
+	; Get current Y position
+	lda oam,x 			; Load A with enemy Y
+	clc					; Clear Carry flag
+	adc #1 				; Add with carry (+1)
+	cmp bottom_line			; Compare with bottom virtual line position
+	bcc @nohitbottom	; Branch on Carry Clear - Till position is lower than virtual bottom line, the carry flag is not set
+	; has reached the ground
+	lda #255			; Load A with 255 (this specific psoition indicate that sprite is not in use)
+	sta oam,x 			; Store new Y position to sprite (hide all sprites)
+	sta oam+4,x			; sprite 2
+	sta oam+8,x			; sprite 3
+	sta oam+12,x		; sprite 4
+
+	; clear the enemies in use flag
+	lda #0 				; Load A with 0
+	sta boltdata,y		; Set use flag
+	jmp @skip			; skip next part
+
+	@nohitbottom:
+	; save the new Y position
+	sta oam,x 			; Sprite 1
+	sta oam+4,x			; sprite 2
+	clc					; Clear Carry flag
+	adc #8				; Add 8
+	sta oam+8,x			; sprite 3
+	sta oam+12,x		; sprite 4
+
+	; Detection with player
+	lda oam,x ; get enemy y position
+	sta cy2
+	lda oam+3,x ; get enemy x position
+	sta cx2
+	lda #16 ; set enemy width and height
+	sta cw2
+	sta ch2
+	jsr collision_test
+	bcc @skip
+
+	; Player hit ennemy
+	lda #$ff
+	sta oam,x ; erase enemy
+	sta oam+4,x
+	sta oam+8,x
+	sta oam+12,x
+	lda #0 ; clear enemy's data flag
+	sta boltdata,y
+
+@skip:
+	iny 				; Increment Y goto to next enemy
+	cpy #1				; Compare Y with 10
+	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
+
+	rts					; exit
 .endproc
 
 
@@ -849,6 +1375,6 @@ default_palette:
 .byte $0F,$01,$11,$21 ; bg2 blue
 .byte $0F,$00,$10,$30 ; bg3 greyscale
 .byte $0F,$2C,$3C,$30 ; sp0 blue / white
-.byte $0F,$14,$24,$34 ; sp1 purple
-.byte $0F,$1B,$2B,$3B ; sp2 teal
+.byte $0F,$11,$21,$31 ; sp1 Blue
+.byte $0F,$15,$26,$37 ; sp2 purple/pink
 .byte $0F,$12,$22,$32 ; sp3 marine
