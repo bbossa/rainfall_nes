@@ -81,6 +81,12 @@ lives: .res 1
 player_dead: .res 1
 powerup: .res 1
 powerup_cooldown: .res 1
+screen_title: .res 1
+flag_bolt: .res 1
+shake: .res 1
+flash: .res 1
+raindata: .res 6
+raincooldown: .res 1
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -354,8 +360,17 @@ loop:
 	and update
 	sta update
 
+	; write current scroll and control settings
+	lda shake ; shake the screen from side to side?
+	beq :+
+		dec shake
+		and #%1
+		asl a
+		asl a
+	:
+
 	; Disable scrolling
-	lda #0
+	;lda #0
 	sta PPU_VRAM_ADDRESS1
 	sta PPU_VRAM_ADDRESS1
 
@@ -394,11 +409,11 @@ irq:
  .segment "CODE"
  .proc main
  	; main application - rendering is currently off
+
  	lda #0 ; set initial high score to 000
 	sta highscore
 	sta highscore+1
 	sta highscore+2
-
 
 	; initialize palette table
  	ldx #0					; Load X with 0
@@ -411,6 +426,11 @@ paletteloop:
 
 resetgame:
 	jsr clear_sprites
+
+	lda #1
+	sta screen_title
+	lda #0
+	sta flag_bolt
 
 	; Draw the title screen
 	jsr display_title_screen
@@ -455,6 +475,9 @@ titleloop:
 	sta score
 	sta score+1
 	sta score+2
+
+	; Set screen flag title to 0
+	sta screen_title
 
 	lda #5 ; set the players starting lives
 	sta lives
@@ -518,9 +541,30 @@ mainloop:
 	jsr spawn_bolt
 	jsr move_bolt
 
+	; spawn and move rain
+	jsr spawn_rain
+	jsr move_rain
+
 	; ensure our changes are rendered
  	lda #1
  	sta nmi_ready
+
+	lda flash
+	beq @noflash
+		dec flash
+		lda palette
+		cmp #$0f
+		bne @noflash
+			lda #$30
+			sta palette
+			sta palette+16
+			jmp mainloop
+@noflash:
+	lda #$f
+	sta palette
+	sta palette+16
+
+ 	jmp mainloop
 
 	; Main loop
 	jmp mainloop
@@ -539,6 +583,37 @@ mainloop:
 		dec powerup_cooldown
 	:
 
+	lda flag_bolt
+	beq @continue
+
+	cmp #1 ; player flagged as dead, set initial shape
+	bne @nextstep
+	ldx #0 ; set 1st explosion pattern
+	lda #%00000011 ; select 4th palette
+	sta oam+2
+	sta oam+6
+	sta oam+10
+	sta oam+14
+	sta oam+18
+	sta oam+22
+	
+@nextstep:
+	inc flag_bolt
+	cmp #40
+	bne @continue
+	ldx #0 
+	lda #%00000000 ; select 1st palette
+	sta oam+2
+	sta oam+6
+	sta oam+10
+	sta oam+14
+	sta oam+18
+	sta oam+22
+	lda #0
+	sta flag_bolt
+
+
+@continue:
 	; Poll gamepad
 	jsr gamepad_poll
 	lda gamepad 				; Load A with Pad A buttons status
@@ -596,18 +671,27 @@ not_gamepad_right:
 		; gamepad A button has been pressed
 		lda powerup_cooldown
 		cmp #0					; Compare with 0
-		beq not_gamepad_a					; Branch on equal - If zero flag is set branch - CPX return a zero flag when X equal 0 -> skip rts instruction
+		bne not_gamepad_a					
 		lda powerup
 		cmp #0
-		beq not_gamepad_a					; Branch on equal - If zero flag is set branch - CPX return a zero flag when X equal 0 -> skip rts instruction
+		beq not_gamepad_a					
 		; Powerup can be used
 		lda #50
 		sta powerup_cooldown
 		; clean all sprites except player
 		jsr strike_objects
+		lda #1
+		sta flag_bolt
+
+		lda #32
+		sta flash
+		sta shake
 
 		; decrease number of powerup
 		dec powerup
+		lda #%00010000 ; set flag so the current lives will be displayed
+		ora update
+		sta update
 			
 		
 
@@ -659,6 +743,18 @@ not_gamepad_a:
 	; set initial heart powerup cooldown
 	lda #200
 	sta boltcooldown
+
+; Clear rain
+	lda #0				; Load A with 0
+	ldx #0				; Load X with 0
+@loop3:
+	sta raindata,x		; Set 0 to heart list (2 byte, one per heart)
+	inx					; Increment X
+	cpx #5				; Branch if Not Equal - If zero flag flag is clear branch -> CPX return zero flag set until X equal 1
+	bne @loop3
+
+	lda #10
+	sta raincooldown
 
 	; Set botom line Y
 	lda #216
@@ -1324,7 +1420,7 @@ not_gamepad_a:
 .endproc
 
 ;*****************************************************************
-; Move heart downward
+; Move bolt downward
 ;*****************************************************************
 .segment "CODE"
 
@@ -1428,6 +1524,149 @@ not_gamepad_a:
 .endproc
 
 .segment "CODE"
+.proc spawn_rain
+	; Check if an rain can pop
+	ldx raincooldown 		; Load X with rain cooldown value
+	dex						; Decrement X
+	stx raincooldown		; Store rain cooldown wit new value
+	cpx #0					; Compare with 0
+	beq :+					; Branch on equal - If zero flag is set branch - CPX return a zero flag when X equal 0 -> skip rts instruction
+		rts					; Exit subroutine - not yet
+	:
+
+	; Spawn a rain based on psuedo RNG
+	ldx #1 					; Load X with 1
+	stx raincooldown		; Store it into heart cooldown -> to rpevent an error for the next call of this subroutine (next call will decrease cooldown by 1)
+
+	lda #1	 				; Load A with current level
+	clc						; Clear Carry flag
+	adc #1 					; Add with Carry - increment by 1 the level
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
+	; +--> Result A is multiply by 4
+	sta temp 				; Store A into temp adress - save our value
+	jsr rand 				; Call rand routine - get next random value
+	tay 					; transfer A into Y
+	cpy temp				; Compare Y with temp (i.e. (lvl +1 ) * 4)
+	; continue if random value less than our calculated value
+	bcc :+ 					; Branch if Carry Clear - CPY set carry flag is Y >= M. If random value is less than our difficulty value an heart pop, other xise exit
+		rts					; exit
+	:
+
+	; An heart pop - Reset cooldown value to intial value
+	ldx #10 				; Load A with 20 - set new cool down period
+	stx raincooldown		; Store A into cooldown adress
+	
+	; Check if a rain can be displayed (max 3 heart on screen)
+	ldy #0 					; Load Y with 0 - counter of heart list
+
+@loop:
+	lda raindata,y			; Load A with rain Y
+	beq :+					; Branch on equal - If zero flag is set branch - Zero flag means ennmy is available (zero value). :+ means branch to next unlabeled tag
+	iny 					; increment counter
+	cpy #5					; Compare to 1 - max bolt list
+	bne @loop				; Branch if Not Equal - If zero flag flag is clear branch -> Y equal 3
+		; did not find an heart to use
+		rts					; After the loop if no enenmy is available, exit
+	:
+
+	; mark the heart as in use
+	lda #1					; Load A with 1
+	sta raindata,y			; Store into ennemy byte
+
+	; calculate first sprite oam position
+	; Each heart use 4 sprites (4 bytes eache). We must defines the first index of sprites in OAM based on heart index:
+	; Rain 0: 0
+	; Rain 1: 4
+	; Rain 2: 8
+	; ...
+	; position on ennemy n: n * 4
+	tya						; Transfert Y to A - Get current ennemy index
+	; multiply by 4
+	asl 					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2) (-> x4) 
+
+	; The first 6 sprites are used by the player cloud. Each sprites takes 4 bytes. The position is then shifted by 24 ((6+40+3) x 4)
+	; Ennemy 0 -> position 24 in OAM; Ennemy 1 -> position 36 ...
+	clc						; Clear Carry flag
+	adc #232 				; Add with Carry - shift OAM position by 24
+	tax						; Transfert A to X
+
+	; now setup the heart sprite
+	; set the Y position (byte 0) of all four parts of the player ship
+	lda #0					; Load A with 0 (top position Y)
+	sta oam,x				; Sprite 1
+	
+	; set the index number (byte 1) of the sprite pattern
+	lda #18				; Set Sprite index (18 in CHR)
+	sta oam+1,x
+	; set the sprite attributes (byte 2)
+	lda #%00000011			; Load A with 00000010 mask
+	sta oam+2,x				; Sprite 1
+
+	; set the X position (byte 3)  of all four parts of the player ship
+	jsr rand				; Call Random routine
+	and #%11110000			; AND to get only higher bits
+	clc						; Carry clear
+	adc #48					; Add with carry (+48)
+	sta oam+3,x
+
+	rts						; Exit
+.endproc
+
+.segment "CODE"
+.proc move_rain
+	; setup for collision detection with player
+
+	ldy #0				; Load Y with 0
+	lda #0				; Load X with 0
+@loop:
+	lda raindata,y		; Get bolt Y in list
+	beq @skip			; Branch on Equal - Branch if zero flag is set - if bolt is not used branch to skip
+
+	; bolt is on screen
+	; calculate first sprite oam position
+	tya					; Transfert Y to A
+	; Compute OAM index (index x 16)
+	asl 				; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	asl					; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear (x2)
+	clc					; Clear Carry flag
+	adc #232			; Add with Carry (+24) - shift OAM position already used by player cloud
+	tax					; Transfert A to X
+
+	; Get current Y position
+	lda oam,x 			; Load A with enemy Y
+	clc					; Clear Carry flag
+	adc #4				; Add with carry (+1)
+	cmp bottom_line			; Compare with bottom virtual line position
+	bcc @nohitbottom	; Branch on Carry Clear - Till position is lower than virtual bottom line, the carry flag is not set
+	; has reached the ground
+	lda #255			; Load A with 255 (this specific position indicate that sprite is not in use)
+	sta oam,x 			; Store new Y position to sprite (hide all sprites)
+
+	; clear the bolt in use flag
+	lda #0 				; Load A with 0
+	sta raindata,y		; Set use flag
+	jmp @skip			; skip next part
+
+	@nohitbottom:
+	; save the new Y position
+	sta oam,x 			; Sprite 1
+	; move X
+	lda oam+3,x
+	sec
+	sbc #2
+	sta oam+3,x
+
+@skip:
+	iny 				; Increment Y goto to next enemy
+	cpy #5				; Compare Y with 10
+	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
+
+	rts					; exit
+.endproc
+
+.segment "CODE"
 .proc strike_objects
 	; place all sprites offscreen at Y=255 (except player)
 	lda #255
@@ -1439,6 +1678,45 @@ clear_oam:
 	inx
 	inx
 	bne clear_oam
+
+	; CLear enmy data
+	lda #0 				; Load A with 0
+	ldx #0				; Load X with 0
+@loop:
+	sta enemydata,x		; Set 0 to enemy list (10 byte, one per enemy)
+	inx					; Increment X
+	cpx #10				; Compare to 10
+	bne @loop			; Branch if Not Equal - If zero flag flag is clear branch -> CPX return zero flag set until X equal 10
+
+	; set initial enemy cool down
+	lda #50 			; Load A with 50 (time before to pop a new ennemy) (~1s)
+	sta enemycooldown	; Store into cooldown adress
+
+	; Clear powerup data (heart)
+	lda #0				; Load A with 0
+	ldx #0				; Load X with 0
+@loop1:
+	sta heardata,x		; Set 0 to heart list (3 byte, one per heart)
+	inx					; Increment X
+	cpx #2				; Branch if Not Equal - If zero flag flag is clear branch -> CPX return zero flag set until X equal 2
+	bne @loop1
+
+	; reset initial heart powerup cooldown
+	lda #100
+	sta heartcooldown
+
+	; Clear powerup data (bolt)
+	lda #0				; Load A with 0
+	ldx #0				; Load X with 0
+@loop2:
+	sta boltdata,x		; Set 0 to heart list (2 byte, one per heart)
+	inx					; Increment X
+	cpx #1				; Branch if Not Equal - If zero flag flag is clear branch -> CPX return zero flag set until X equal 1
+	bne @loop2
+
+	; reset initial bolt powerup cooldown
+	lda #200
+	sta boltcooldown
 
 	rts
 .endproc
@@ -1658,7 +1936,7 @@ loop:
 .segment "CODE"
 
 .proc display_powerup
-	vram_set_address (NAME_TABLE_0_ADDRESS + 27 * 32 + 27)
+	vram_set_address (NAME_TABLE_0_ADDRESS + 28 * 32 + 27)
 
 	lda powerup ; Powerup should be comprise between 0 and 9
 	clc
@@ -1808,4 +2086,4 @@ default_palette:
 .byte $0F,$2C,$3C,$30 ; sp0 blue / white
 .byte $0F,$11,$21,$31 ; sp1 Blue
 .byte $0F,$15,$26,$37 ; sp2 purple/pink
-.byte $0F,$12,$22,$32 ; sp3 marine
+.byte $0F,$2D,$27,$10 ; sp3 marine
