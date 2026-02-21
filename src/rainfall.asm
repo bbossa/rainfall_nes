@@ -77,6 +77,8 @@ bottom_line: .res 1
 score: .res 3
 update: .res 1
 highscore: .res 3
+lives: .res 1
+player_dead: .res 1
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -245,6 +247,10 @@ wait_vblank2:
 ;*****************************************************************
 
 .segment "CODE"
+
+gameovertext:
+	.byte " G A M E  O V E R",0
+
 .proc nmi
 	; save registers (to prevent corruption)
 	pha		; Push A to stack
@@ -303,12 +309,40 @@ loop:
 	lda #%00000001 ; has the score updated?
 	bit update
 	beq @skipscore
-		
-	jsr display_score ; display score
+		jsr display_score ; display score
+@skipscore:
+
+	lda #%00000010 ; has the high score updated?
+	bit update
+	beq @skiphighscore
+		jsr display_highscore ; display high score
+		lda #%11111101 ; reset high score update flag
+		and update
+		sta update
+@skiphighscore:
+
+	lda #%00000100 ; display the players lives
+	bit update
+	beq @skiplives
+		jsr display_lives
+		lda #%11111011
+		and update
+		sta update
+@skiplives:
+	lda #%00001000 ; does the game over message need to be displayed?
+	bit update
+	beq @skipgameover
+		vram_set_address (NAME_TABLE_0_ADDRESS + 14 * 32 + 7)
+		assign_16i text_address, gameovertext 
+		jsr write_text
+		lda #%11110111 ; reset game over message update flag
+		and update
+		sta update
+@skipgameover:
+
 	lda #%11111110 ; reset score update flag
 	and update
 	sta update
-@skipscore:
 
 	; Disable scrolling
 	lda #0
@@ -365,6 +399,9 @@ paletteloop:
 	cpx #32					; Compare with value 32
 	bcc paletteloop			; Branch on Carry Clear - If X is lower than 32, the Carry flag is not set, branch occurs.
 
+resetgame:
+	jsr clear_sprites
+
 	; Draw the title screen
 	jsr display_title_screen
 
@@ -409,55 +446,17 @@ titleloop:
 	sta score+1
 	sta score+2
 
+	lda #5 ; set the players starting lives
+	sta lives
+	lda #0 ; reset our player_dead flag
+	sta player_dead 
+
 	; draw the game screen
 	jsr display_game_screen
 
 	; display the player's cloud
-	; set the Y position (byte 0) of all six parts of the player cloud
-	; A sprite is defined with 4 bytes 0 1 2 3 - Y, Index, Attributes, X 
-	lda #196 		; Define Y position (pixel)
-	sta oam			; Store into sprite 1 (top left)
-	sta oam+4 		; Store into sprite 2 (top middle)
-	sta oam+8 		; Store into sprite 3 (top right)
-	lda #204		; 196 + 8 (increase position by sprite height)
-	sta oam+12		; Store into sprite 4 (bottom left)
-	sta oam+16		; Store into sprite 5 (bottom middle)
-	sta oam+20		; Store into sprite 6 (bottom right)
-
-	; Set index number (byte 1) of the sprite pattern (which sprite to use in CHR)
-	ldx #0			; First index: 0
-	stx oam+1		; Store into sprite 1 (top left) (byte 0 + 1)
-	inx				; increment X (index 1)
-	stx oam+5		; Store into sprite 2 (top middle)
-	inx				; increment X (index 2)
-	stx oam+9		; Store into sprite 3 (top right)
-	inx				; increment X (index 3)
-	stx oam+13		; Store into sprite 4 (bottom left)
-	inx				; increment X (index 4)
-	stx oam+17		; Store into sprite 5 (bottom middle)
-	inx				; increment X (index 5)
-	stx oam+21		; Store into sprite 6 (bottom right)
-
-	; set the sprite attributes (byte 2)
-	lda #%00000000	; Load A with 0 mask
-	sta oam+2		; Store into sprite 1 (top left) (byte 0 + 2)
-	sta oam+6		; Store into sprite 2 (top middle)
-	sta oam+10		; Store into sprite 3 (top right)
-	sta oam+14		; Store into sprite 4 (bottom left)
-	sta oam+18		; Store into sprite 5 (bottom middle)
-	sta oam+22		; Store into sprite 6 (bottom right)
-
-	; set the X position (byte 3)  of all six parts of the player cloud
-	; middle is around 120 : 112 <- 120 -> 128
-	lda #112		; Load A with left sprite position (120-8)
-	sta oam+3		; Store into sprite 1 (top left) (byte 0 + 3)
-	sta oam+15		; Store into sprite 4 (bottom left)
-	lda #120 		; Load A with middle position (120)
-	sta oam+7		; Store into sprite 2 (top middle)
-	sta oam+19		; Store into sprite 5 (bottom middle)
-	lda #128 		; Load A with right sprite position (120+8)
-	sta oam+11		; Store into sprite 3 (top right)
-	sta oam+23		; Store into sprite 6 (bottom right)
+	jsr display_player
+	
 
 	; Draw sprites
 	jsr ppu_update
@@ -473,6 +472,26 @@ mainloop:
 
 	; time has changed update the lasttime value
 	sta lasttime		; Copyr current time to lasttime
+
+	lda lives
+	bne @notgameover
+	lda player_dead
+	cmp #1
+	bcc @notgameover
+	cmp #240 ; we have waited long enough, jump back to the title screen 
+	beq resetgame
+	cmp #20
+	bne @notgameoversetup
+	lda #%00001000 ; signal to display Game Over message
+	ora update
+	sta update
+	; ensure our changes are rendered
+ 	lda #1
+ 	sta nmi_ready
+@notgameoversetup:
+	inc player_dead
+	jmp mainloop
+@notgameover:
 
 	; Check user input
 	jsr player_actions
@@ -780,6 +799,10 @@ not_gamepad_right:
 	; clear the enemies in use flag
 	lda #0 				; Load A with 0
 	sta enemydata,y		; Set use flag
+
+	; remove one life
+	jsr remove_life
+
 	jmp @skip			; skip next part
 
 	@nohitbottom:
@@ -825,6 +848,22 @@ not_gamepad_right:
 	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
 
 	rts					; exit
+.endproc
+
+.segment "CODE"
+.proc remove_life
+	dec lives ; decrease our lives counter
+	lda #%00000100 ; set flag so the current lives will be displayed
+	ora update
+	sta update
+	lda lives
+	cmp #0
+	bne :+
+		lda #1
+		sta player_dead
+	:
+
+	rts
 .endproc
 
 ;*****************************************************************
@@ -885,6 +924,10 @@ not_gamepad_right:
 	sta highscore+1
 	lda score+2
 	sta highscore+2
+
+	lda #%00000010 ; set flag to write high score to the screen
+	ora update
+	sta update
 
 @nothighscore:
 	rts
@@ -1031,10 +1074,10 @@ not_gamepad_right:
 	ldy #0				; Load Y with 0
 	lda #0				; Load X with 0
 @loop:
-	lda heardata,y		; Get ennemy Y in list
+	lda heardata,y		; Get heart Y in list
 	beq @skip			; Branch on Equal - Branch if zero flag is set - if ennemy is not used branch to skip
 
-	; enemy is on screen
+	; heart is on screen
 	; calculate first sprite oam position
 	tya					; Transfert Y to A
 	; Compute OAM index (index x 16)
@@ -1059,7 +1102,7 @@ not_gamepad_right:
 	sta oam+8,x			; sprite 3
 	sta oam+12,x		; sprite 4
 
-	; clear the enemies in use flag
+	; clear the heart in use flag
 	lda #0 				; Load A with 0
 	sta heardata,y		; Set use flag
 	jmp @skip			; skip next part
@@ -1074,32 +1117,42 @@ not_gamepad_right:
 	sta oam+12,x		; sprite 4
 
 	; Detection with player
-	lda oam,x ; get enemy y position
+	lda oam,x ; get heart y position
 	clc
 	adc #1 ; first row is empty
 	sta cy2
-	lda oam+3,x ; get enemy x position
+	lda oam+3,x ; get heart x position
 	clc
 	adc #2
 	sta cx2
-	lda #11 ; set enemy width 
+	lda #11 ; set heart width 
 	sta cw2
-	lda #10 ; set enemy height
+	lda #10 ; set heart height
 	sta ch2
 	jsr collision_test
 	bcc @skip
 
-	; Player hit ennemy
+	; Player hit heart
 	lda #$ff
-	sta oam,x ; erase enemy
+	sta oam,x ; erase heart
 	sta oam+4,x
 	sta oam+8,x
 	sta oam+12,x
-	lda #0 ; clear enemy's data flag
+	lda #0 ; clear heart's data flag
 	sta heardata,y
 
+	; Increase player's life
+	lda lives
+	cmp #8
+	bpl :+
+		inc lives ; decrease our lives counter
+		lda #%00000100 ; set flag so the current lives will be displayed
+		ora update
+		sta update
+	:
+
 @skip:
-	iny 				; Increment Y goto to next enemy
+	iny 				; Increment Y goto to next heart
 	cpy #2			; Compare Y with 10
 	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
 
@@ -1357,6 +1410,97 @@ not_gamepad_right:
 .endproc
 
 ;*****************************************************************
+; display_highscore: Write the high score to the screen
+;*****************************************************************
+.segment "CODE"
+
+.proc display_highscore
+	vram_set_address (NAME_TABLE_0_ADDRESS + 29 * 32 + 7)
+
+	lda highscore+2 ; transform each decimal digit of the high score
+	jsr dec99_to_bytes
+	stx temp
+	sta temp+1
+
+	lda highscore+1
+	jsr dec99_to_bytes
+	stx temp+2
+	sta temp+3
+
+	lda highscore
+	jsr dec99_to_bytes
+	stx temp+4
+	sta temp+5
+
+	ldx #0 ; write the six characters to the screen
+@loop:
+	lda temp,x
+	clc
+	adc #48
+	sta PPU_VRAM_IO
+	inx
+	cpx #6
+	bne @loop
+
+	vram_clear_address
+	rts
+.endproc
+
+;*****************************************************************
+; display_player
+;*****************************************************************
+.segment "CODE"
+.proc display_player
+	; set the Y position (byte 0) of all six parts of the player cloud
+	; A sprite is defined with 4 bytes 0 1 2 3 - Y, Index, Attributes, X 
+	lda #196 		; Define Y position (pixel)
+	sta oam			; Store into sprite 1 (top left)
+	sta oam+4 		; Store into sprite 2 (top middle)
+	sta oam+8 		; Store into sprite 3 (top right)
+	lda #204		; 196 + 8 (increase position by sprite height)
+	sta oam+12		; Store into sprite 4 (bottom left)
+	sta oam+16		; Store into sprite 5 (bottom middle)
+	sta oam+20		; Store into sprite 6 (bottom right)
+
+	; Set index number (byte 1) of the sprite pattern (which sprite to use in CHR)
+	ldx #0			; First index: 0
+	stx oam+1		; Store into sprite 1 (top left) (byte 0 + 1)
+	inx				; increment X (index 1)
+	stx oam+5		; Store into sprite 2 (top middle)
+	inx				; increment X (index 2)
+	stx oam+9		; Store into sprite 3 (top right)
+	inx				; increment X (index 3)
+	stx oam+13		; Store into sprite 4 (bottom left)
+	inx				; increment X (index 4)
+	stx oam+17		; Store into sprite 5 (bottom middle)
+	inx				; increment X (index 5)
+	stx oam+21		; Store into sprite 6 (bottom right)
+
+	; set the sprite attributes (byte 2)
+	lda #%00000000	; Load A with 0 mask
+	sta oam+2		; Store into sprite 1 (top left) (byte 0 + 2)
+	sta oam+6		; Store into sprite 2 (top middle)
+	sta oam+10		; Store into sprite 3 (top right)
+	sta oam+14		; Store into sprite 4 (bottom left)
+	sta oam+18		; Store into sprite 5 (bottom middle)
+	sta oam+22		; Store into sprite 6 (bottom right)
+
+	; set the X position (byte 3)  of all six parts of the player cloud
+	; middle is around 120 : 112 <- 120 -> 128
+	lda #112		; Load A with left sprite position (120-8)
+	sta oam+3		; Store into sprite 1 (top left) (byte 0 + 3)
+	sta oam+15		; Store into sprite 4 (bottom left)
+	lda #120 		; Load A with middle position (120)
+	sta oam+7		; Store into sprite 2 (top middle)
+	sta oam+19		; Store into sprite 5 (bottom middle)
+	lda #128 		; Load A with right sprite position (120+8)
+	sta oam+11		; Store into sprite 3 (top right)
+	sta oam+23		; Store into sprite 6 (bottom right)
+
+	rts
+.endproc
+
+;*****************************************************************
 ; Display Title Screen
 ;*****************************************************************
 .segment "ZEROPAGE"
@@ -1405,6 +1549,38 @@ loop:
 	rts
 .endproc
 
+;*****************************************************************
+; Display player life
+;*****************************************************************
+.segment "CODE"
+.proc display_lives
+	vram_set_address (NAME_TABLE_0_ADDRESS + 28 * 32 + 14)
+	ldx lives
+	beq @skip ; no lives to display
+	and #%00000111 ; limit to a max of 8
+@loop:
+	lda #$17
+	sta PPU_VRAM_IO
+	dex
+	bne @loop
+@skip:
+	lda #8 ; blank out the remainder of the row
+	sec
+	sbc lives
+	bcc @skip2
+	beq @skip2
+	tax
+	lda #0
+@loop2:
+	sta PPU_VRAM_IO
+	sta PPU_VRAM_IO
+	dex
+	bne @loop2
+@skip2:
+
+	rts
+.endproc
+
 
 ;*****************************************************************
 ; Display Main Game Screen
@@ -1422,7 +1598,10 @@ game_cloud_3:
 
 game_screen_scoreline:
 	.byte $00,"S","C","O","R","E",$21,"0","0","0","0","0","0",$00,$00,$00
-	.byte $17,$17,$17,$17,$17,$00,$00,$00,$00,$00,$00,"0",$22,$18,$00,$00
+	.byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,"0",$22,$18,$00,$00
+game_screen_highscore:
+	.byte $00,"M","A","X",$00,$00,$21,"0","0","0","0","0","0",$00,$00,$00
+	.byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
 
 ;**
 ; Each byte define a meta-tile composed of 4tiles :
@@ -1486,6 +1665,23 @@ loop4:
 	iny
 	cpy #32
 	bne loop4
+
+	; output the high score section
+	vram_set_address (NAME_TABLE_0_ADDRESS + 29 * 32) 	; line 26 draw
+	assign_16i paddr, game_screen_highscore
+	ldy #$00
+loop5:
+	lda (paddr),y
+	sta PPU_VRAM_IO
+	iny
+	cpy #32
+	bne loop5
+
+	; Draw player life
+	jsr display_lives
+
+	; Draw High Score
+	jsr display_highscore
 
 	; Set the title text to use the 2nd palette entries - 8 adress
 	vram_set_address ATTRIBUTE_TABLE_0_ADDRESS				; Get position of the palette
