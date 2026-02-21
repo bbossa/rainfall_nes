@@ -79,6 +79,8 @@ update: .res 1
 highscore: .res 3
 lives: .res 1
 player_dead: .res 1
+powerup: .res 1
+powerup_cooldown: .res 1
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -339,6 +341,14 @@ loop:
 		and update
 		sta update
 @skipgameover:
+	lda #%00010000 ; display power up
+	bit update
+	beq @skippowerup
+		jsr display_powerup
+		lda #%11101111
+		and update
+		sta update
+@skippowerup:
 
 	lda #%11111110 ; reset score update flag
 	and update
@@ -448,6 +458,8 @@ titleloop:
 
 	lda #5 ; set the players starting lives
 	sta lives
+	lda #1 ; set player starting power up
+	sta powerup
 	lda #0 ; reset our player_dead flag
 	sta player_dead 
 
@@ -520,6 +532,13 @@ mainloop:
 ;*****************************************************************
 .segment "CODE"
 .proc player_actions
+	; decrease counter
+	lda powerup_cooldown
+	cmp #0					; Compare with 0
+	beq :+
+		dec powerup_cooldown
+	:
+
 	; Poll gamepad
 	jsr gamepad_poll
 	lda gamepad 				; Load A with Pad A buttons status
@@ -571,6 +590,28 @@ not_gamepad_left:
 		sta oam + 11 			; sprite 3
 		sta oam + 23			; sprite 6
 not_gamepad_right:
+	lda gamepad
+	and #PAD_A
+	beq not_gamepad_a
+		; gamepad A button has been pressed
+		lda powerup_cooldown
+		cmp #0					; Compare with 0
+		beq not_gamepad_a					; Branch on equal - If zero flag is set branch - CPX return a zero flag when X equal 0 -> skip rts instruction
+		lda powerup
+		cmp #0
+		beq not_gamepad_a					; Branch on equal - If zero flag is set branch - CPX return a zero flag when X equal 0 -> skip rts instruction
+		; Powerup can be used
+		lda #50
+		sta powerup_cooldown
+		; clean all sprites except player
+		jsr strike_objects
+
+		; decrease number of powerup
+		dec powerup
+			
+		
+
+not_gamepad_a:	
 	rts
 .endproc
 
@@ -622,6 +663,10 @@ not_gamepad_right:
 	; Set botom line Y
 	lda #216
 	sta bottom_line
+
+	; set powerup cooldown
+	lda #50
+	sta powerup_cooldown
 
 	rts					; exit subroutine			
 .endproc
@@ -1299,10 +1344,10 @@ not_gamepad_right:
 	ldy #0				; Load Y with 0
 	lda #0				; Load X with 0
 @loop:
-	lda boltdata,y		; Get ennemy Y in list
-	beq @skip			; Branch on Equal - Branch if zero flag is set - if ennemy is not used branch to skip
+	lda boltdata,y		; Get bolt Y in list
+	beq @skip			; Branch on Equal - Branch if zero flag is set - if bolt is not used branch to skip
 
-	; enemy is on screen
+	; bolt is on screen
 	; calculate first sprite oam position
 	tya					; Transfert Y to A
 	; Compute OAM index (index x 16)
@@ -1321,13 +1366,13 @@ not_gamepad_right:
 	cmp bottom_line			; Compare with bottom virtual line position
 	bcc @nohitbottom	; Branch on Carry Clear - Till position is lower than virtual bottom line, the carry flag is not set
 	; has reached the ground
-	lda #255			; Load A with 255 (this specific psoition indicate that sprite is not in use)
+	lda #255			; Load A with 255 (this specific position indicate that sprite is not in use)
 	sta oam,x 			; Store new Y position to sprite (hide all sprites)
 	sta oam+4,x			; sprite 2
 	sta oam+8,x			; sprite 3
 	sta oam+12,x		; sprite 4
 
-	; clear the enemies in use flag
+	; clear the bolt in use flag
 	lda #0 				; Load A with 0
 	sta boltdata,y		; Set use flag
 	jmp @skip			; skip next part
@@ -1342,27 +1387,37 @@ not_gamepad_right:
 	sta oam+12,x		; sprite 4
 
 	; Detection with player
-	lda oam,x ; get enemy y position
+	lda oam,x ; get bolt y position
 	sta cy2
-	lda oam+3,x ; get enemy x position
+	lda oam+3,x ; get bolt x position
 	clc
 	adc #3		; Add with carry - Bolt sprite has 3 first column empty.
 	sta cx2
-	lda #10 ; set enemy width
+	lda #10 ; set bolt width
 	sta cw2
-	lda #15 ; set enemy width
+	lda #15 ; set bolt width
 	sta ch2
 	jsr collision_test
 	bcc @skip
 
-	; Player hit ennemy
+	; Player hit bolt
 	lda #$ff
 	sta oam,x ; erase enemy
 	sta oam+4,x
 	sta oam+8,x
 	sta oam+12,x
-	lda #0 ; clear enemy's data flag
+	lda #0 ; clear bolt's data flag
 	sta boltdata,y
+
+	; Increase player bolt powerup
+	lda powerup
+	cmp #9
+	bpl :+
+		inc powerup ; decrease our lives counter
+		lda #%00010000 ; set flag so the current lives will be displayed
+		ora update
+		sta update
+	:
 
 @skip:
 	iny 				; Increment Y goto to next enemy
@@ -1370,6 +1425,22 @@ not_gamepad_right:
 	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
 
 	rts					; exit
+.endproc
+
+.segment "CODE"
+.proc strike_objects
+	; place all sprites offscreen at Y=255 (except player)
+	lda #255
+	ldx #24
+clear_oam:
+	sta oam,x
+	inx
+	inx
+	inx
+	inx
+	bne clear_oam
+
+	rts
 .endproc
 
 ;*****************************************************************
@@ -1581,6 +1652,23 @@ loop:
 	rts
 .endproc
 
+;*****************************************************************
+; display player power up
+;*****************************************************************
+.segment "CODE"
+
+.proc display_powerup
+	vram_set_address (NAME_TABLE_0_ADDRESS + 27 * 32 + 27)
+
+	lda powerup ; Powerup should be comprise between 0 and 9
+	clc
+	adc #48
+	sta PPU_VRAM_IO
+	
+	vram_clear_address
+	rts
+.endproc
+
 
 ;*****************************************************************
 ; Display Main Game Screen
@@ -1682,6 +1770,9 @@ loop5:
 
 	; Draw High Score
 	jsr display_highscore
+
+	; Draw powerup
+	jsr display_powerup
 
 	; Set the title text to use the 2nd palette entries - 8 adress
 	vram_set_address ATTRIBUTE_TABLE_0_ADDRESS				; Get position of the palette
