@@ -71,7 +71,9 @@ heardata: .res 2
 boltdata: .res 1
 enemycooldown: .res 1
 heartcooldown: .res 1
+heartcooldownvalue: .res 1
 boltcooldown: .res 1
+boltcooldownvalue: .res 1
 temp: .res 10
 bottom_line: .res 1
 score: .res 3
@@ -89,6 +91,9 @@ raindata: .res 6
 raincooldown: .res 1
 enemycount: .res 1
 displaylevel: .res 1
+leveldata: .res 10
+speeddata: .res 10
+dropspeed: .res 1
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -765,10 +770,52 @@ not_gamepad_a:
 	lda #10
 	sta raincooldown
 
+	lda #200
+	sta heartcooldownvalue
+
+	lda #250
+	sta boltcooldownvalue
+
 	; Set botom line Y
 	lda #216
 	sta bottom_line
 
+	; init level data table
+	lda #10
+	sta leveldata
+	lda #11
+	sta leveldata+1
+	lda #12
+	sta leveldata+2
+	lda #15
+	sta leveldata+3
+	lda #21
+	sta leveldata+4
+	lda #30
+	sta leveldata+5
+	lda #48
+	sta leveldata+6
+	lda #82
+	sta leveldata+7
+	lda #143
+	sta leveldata+8
+	lda #$FF
+	sta leveldata+9
+
+	; init speed table
+	lda #1
+	sta speeddata
+	sta speeddata+1
+	sta speeddata+2
+	sta speeddata+3
+	lda #2
+	sta speeddata+4
+	sta speeddata+5
+	sta speeddata+6
+	sta speeddata+7
+	lda #3
+	sta speeddata+8
+	sta speeddata+9
 	rts
 .endproc
 
@@ -813,6 +860,7 @@ not_gamepad_a:
 .proc setup_level 
 	; CLear enmy data
 	lda #0 				; Load A with 0
+	sta enemycount
 	ldx #0				; Load X with 0
 @loop:
 	sta enemydata,x		; Set 0 to enemy list (10 byte, one per enemy)
@@ -834,7 +882,7 @@ not_gamepad_a:
 	bne @loop1
 
 	; set initial heart powerup cooldown
-	lda #100
+	lda heartcooldownvalue
 	sta heartcooldown
 
 	; Clear powerup data (bolt)
@@ -846,8 +894,8 @@ not_gamepad_a:
 	cpx #1				; Branch if Not Equal - If zero flag flag is clear branch -> CPX return zero flag set until X equal 1
 	bne @loop2
 
-	; set initial heart powerup cooldown
-	lda #200
+	; set initial bolt powerup cooldown
+	lda boltcooldownvalue
 	sta boltcooldown
 
 ; Clear rain
@@ -995,6 +1043,12 @@ not_gamepad_a:
 
 .proc move_enemies
 
+	; setup speed
+	ldx level
+	dex
+	lda speeddata,x
+	sta dropspeed
+
 	; setup for collision detection with player
 	lda oam ; get cloud Y position
 	clc
@@ -1029,7 +1083,7 @@ not_gamepad_a:
 	; Get current Y position
 	lda oam,x 			; Load A with enemy Y
 	clc					; Clear Carry flag
-	adc #1 				; Add with carry (+1)
+	adc dropspeed		; Add with carry (+1)
 	cmp bottom_line			; Compare with bottom virtual line position
 	bcc @nohitbottom	; Branch on Carry Clear - Till position is lower than virtual bottom line, the carry flag is not set
 	; has reached the ground
@@ -1082,8 +1136,10 @@ not_gamepad_a:
 	lda #0 ; clear enemy's data flag
 	sta enemydata,y
 
-	lda #1
+	lda level
 	jsr add_score
+
+	jsr add_level
 
 @skip:
 	iny 				; Increment Y goto to next enemy
@@ -1106,6 +1162,37 @@ not_gamepad_a:
 		sta player_dead
 	:
 
+	rts
+.endproc
+
+.segment "CODE"
+.proc add_level
+	inc enemycount
+	ldx level
+	dex
+	lda leveldata,x
+	cmp enemycount
+	bne @notlevelup
+	lda #0
+	sta enemycount
+	lda #10
+	cmp level
+	beq @notlevelup
+	inc level
+	; kill all entities
+	jsr strike_objects
+	; Display new stage
+	lda #64
+	sta displaylevel
+	sta displaylevel
+	lda #%00100001 ; set flag so the current score and level will be displayed
+	ora update
+	sta update
+
+	; Setup new level
+	jsr setup_level
+
+@notlevelup:
 	rts
 .endproc
 
@@ -1211,7 +1298,7 @@ not_gamepad_a:
 	:
 
 	; An heart pop - Reset cooldown value to intial value
-	ldx #20 				; Load A with 20 - set new cool down period
+	ldx heartcooldownvalue	; Load A with 20 - set new cool down period
 	stx heartcooldown		; Store A into cooldown adress
 	
 	; Check if an ennemy can be displayed (max 3 heart on screen)
@@ -1436,8 +1523,8 @@ not_gamepad_a:
 		rts					; exit
 	:
 
-	; An heart pop - Reset cooldown value to intial value
-	ldx #20 				; Load A with 20 - set new cool down period
+	; A bolt pop - Reset cooldown value to intial value
+	ldx boltcooldownvalue				; Load A with 20 - set new cool down period
 	stx boltcooldown		; Store A into cooldown adress
 	
 	; Check if an ennemy can be displayed (max 3 heart on screen)
@@ -1558,21 +1645,15 @@ not_gamepad_a:
 	tax					; Transfert A to X
 
 	; Get current Y position
+
 	lda oam,x 			; Load A with enemy Y
 	clc					; Clear Carry flag
 	adc #1 				; Add with carry (+1)
 	cmp bottom_line			; Compare with bottom virtual line position
 	bcc @nohitbottom	; Branch on Carry Clear - Till position is lower than virtual bottom line, the carry flag is not set
 	; has reached the ground
-	lda #255			; Load A with 255 (this specific position indicate that sprite is not in use)
-	sta oam,x 			; Store new Y position to sprite (hide all sprites)
-	sta oam+4,x			; sprite 2
-	sta oam+8,x			; sprite 3
-	sta oam+12,x		; sprite 4
-
-	; clear the bolt in use flag
-	lda #0 				; Load A with 0
-	sta boltdata,y		; Set use flag
+	jsr clear_bolt
+	
 	jmp @skip			; skip next part
 
 	@nohitbottom:
@@ -1623,6 +1704,21 @@ not_gamepad_a:
 	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
 
 	rts					; exit
+.endproc
+
+.segment "CODE"
+.proc clear_bolt
+	lda #255			; Load A with 255 (this specific position indicate that sprite is not in use)
+	sta oam,x 			; Store new Y position to sprite (hide all sprites)
+	sta oam+4,x			; sprite 2
+	sta oam+8,x			; sprite 3
+	sta oam+12,x		; sprite 4
+
+	; clear the bolt in use flag
+	lda #0 				; Load A with 0
+	sta boltdata,y		; Set use flag
+
+	rts
 .endproc
 
 .segment "CODE"
@@ -1785,7 +1881,7 @@ clear_oam:
 	bne @loop1
 
 	; reset initial heart powerup cooldown
-	lda #100
+	lda heartcooldownvalue
 	sta heartcooldown
 
 	; Clear powerup data (bolt)
@@ -1798,7 +1894,7 @@ clear_oam:
 	bne @loop2
 
 	; reset initial bolt powerup cooldown
-	lda #200
+	lda boltcooldownvalue
 	sta boltcooldown
 
 	rts
