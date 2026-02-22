@@ -42,6 +42,14 @@ OBJ_OFF = $00 ; turn objects off
 OBJ_CLIP = $10 ; clip objects
 OBJ_ON = $14 ; turn objects on
 
+OBJ_PAL_1 = $00 ; Sprite palette 1
+OBJ_PAL_2 = $01 ; Sprite palette 2
+OBJ_PAL_3 = $02 ; Sprite palette 3
+OBJ_PAL_4 = $03 ; Sprite palette 4
+
+OBJ_FG = $00 	; Sprite on foreground 
+OBJ_BG = $20	; Sprite on background
+
 ; Useful PPU memory addresses
 NAME_TABLE_0_ADDRESS		= $2000
 ATTRIBUTE_TABLE_0_ADDRESS	= $23C0

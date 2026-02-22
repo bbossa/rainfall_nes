@@ -87,6 +87,8 @@ shake: .res 1
 flash: .res 1
 raindata: .res 6
 raincooldown: .res 1
+enemycount: .res 1
+displaylevel: .res 1
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -259,6 +261,9 @@ wait_vblank2:
 gameovertext:
 	.byte " G A M E  O V E R",0
 
+leveltext:
+	.byte " S T A G E ",0
+
 .proc nmi
 	; save registers (to prevent corruption)
 	pha		; Push A to stack
@@ -356,6 +361,45 @@ loop:
 		sta update
 @skippowerup:
 
+lda #%00100000 ; does the level message need to be displayed?
+	bit update
+	beq @skipdisplaylevel
+		vram_set_address (NAME_TABLE_0_ADDRESS + 14 * 32 + 9)
+		assign_16i text_address, leveltext 
+		jsr write_text
+		lda level ; transform each decimal digit of the level
+		jsr dec99_to_bytes
+		stx temp
+		sta temp+1
+		lda temp
+		clc
+		adc #48
+		sta PPU_VRAM_IO 
+		lda temp+1
+		clc
+		adc #48
+		sta PPU_VRAM_IO 
+		lda #%11011111 ; reset level message update flag
+		and update
+		sta update
+@skipdisplaylevel:
+	lda #%01000000 ; does the level message need to be removed?
+	bit update
+	beq @skipremovedisplaylevel
+		vram_set_address (NAME_TABLE_0_ADDRESS + 14 * 32 + 9)
+		ldx #0
+		lda #0
+		:
+			sta PPU_VRAM_IO 
+			inx
+			cpx #18
+			bne :-
+
+		lda #%10111111 ; reset level message update flag
+		and update
+		sta update
+@skipremovedisplaylevel:
+
 	lda #%11111110 ; reset score update flag
 	and update
 	sta update
@@ -410,10 +454,8 @@ irq:
  .proc main
  	; main application - rendering is currently off
 
- 	lda #0 ; set initial high score to 000
-	sta highscore
-	sta highscore+1
-	sta highscore+2
+	jsr init_value
+ 	
 
 	; initialize palette table
  	ldx #0					; Load X with 0
@@ -445,6 +487,14 @@ resetgame:
 	jsr ppu_update
 
 titleloop:
+	; spawn and move rain
+	jsr spawn_rain
+	jsr move_rain
+
+	; ensure our changes are rendered
+ 	lda #1
+ 	sta nmi_ready
+
 	; Poll gamepad
 	jsr gamepad_poll
 	;; Game pad is store as:
@@ -455,44 +505,27 @@ titleloop:
 	beq titleloop			; Branch on Equal - Branch is zero flag is set - If A or Start is not presses, then result is 0 (any other button can be pressed)
 
 	; set our random seed based on the time counter since the splash screen was displayed
-	lda time				; Load A with value of time
-	sta SEED0				; Store time value inbto first seed
-	lda time+1				; Get higher byte
-	sta SEED0+1				; Store into high byte of seed0
-	jsr randomize			; Call randomize routine
-	sbc time+1				; Substract with carry
-	sta SEED2   			; Store into seed2
-	jsr randomize			; Call randomize routine
-	sbc time				; subtract wih carry
-	sta SEED2+1				; Store into high byte of seed2
+	jsr init_game
+	jsr strike_objects
 
-	; set up ready for a new game
-	lda #1					; Load A with value 1
-	sta level				; Store into level (level 1 for difficulty)
 	jsr setup_level			; Setup level
 
-	lda #0 ; reset the player's score
-	sta score
-	sta score+1
-	sta score+2
-
 	; Set screen flag title to 0
-	sta screen_title
-
-	lda #5 ; set the players starting lives
-	sta lives
-	lda #1 ; set player starting power up
-	sta powerup
-	lda #0 ; reset our player_dead flag
-	sta player_dead 
+	lda #$00
+	sta screen_title 
 
 	; draw the game screen
 	jsr display_game_screen
 
 	; display the player's cloud
 	jsr display_player
-	
 
+	lda #64
+	sta displaylevel
+	lda #%00100001 ; set flag so the current score and level will be displayed
+	ora update
+	sta update
+	
 	; Draw sprites
 	jsr ppu_update
 
@@ -544,6 +577,15 @@ mainloop:
 	; spawn and move rain
 	jsr spawn_rain
 	jsr move_rain
+
+	lda displaylevel
+	beq @nodisplaylevelcountdown
+		dec displaylevel
+		bne @nodisplaylevelcountdown
+		lda #%01000000 ; signal to erase level message
+		ora update
+		sta update
+	@nodisplaylevelcountdown:
 
 	; ensure our changes are rendered
  	lda #1
@@ -699,6 +741,70 @@ not_gamepad_a:
 	rts
 .endproc
 
+.segment "CODE"
+.proc init_value
+	lda #0 ; set initial high score to 000
+	sta highscore
+	sta highscore+1
+	sta highscore+2
+
+
+	; Init with fixed seed
+	lda #$28				; Load A 
+	sta SEED0				; Store time value inbto first seed
+	lda #$03
+	sta SEED0+1				; Store into high byte of seed0
+	jsr randomize			; Call randomize routine
+	sbc #$03				; Substract with carry
+	sta SEED2   			; Store into seed2
+	jsr randomize			; Call randomize routine
+	sbc #$28				; subtract wih carry
+	sta SEED2+1				; Store into high byte of seed2
+
+	; init table
+	lda #10
+	sta raincooldown
+
+	; Set botom line Y
+	lda #216
+	sta bottom_line
+
+	rts
+.endproc
+
+.segment "CODE"
+.proc init_game
+	lda time				; Load A with value of time
+	sta SEED0				; Store time value inbto first seed
+	lda time+1				; Get higher byte
+	sta SEED0+1				; Store into high byte of seed0
+	jsr randomize			; Call randomize routine
+	sbc time+1				; Substract with carry
+	sta SEED2   			; Store into seed2
+	jsr randomize			; Call randomize routine
+	sbc time				; subtract wih carry
+	sta SEED2+1				; Store into high byte of seed2
+
+	; set up ready for a new game
+	lda #1					; Load A with value 1
+	sta level				; Store into level (level 1 for difficulty)
+
+	lda #0 ; reset the player's score
+	sta score
+	sta score+1
+	sta score+2
+
+	lda #5 ; set the players starting lives
+	sta lives
+	lda #1 ; set player starting power up
+	sta powerup
+	lda #0 ; reset our player_dead flag
+	sta player_dead
+
+	lda #10
+	sta raincooldown
+.endproc
+
 ;*****************************************************************
 ; Get setup for a new level
 ;*****************************************************************
@@ -755,10 +861,6 @@ not_gamepad_a:
 
 	lda #10
 	sta raincooldown
-
-	; Set botom line Y
-	lda #216
-	sta bottom_line
 
 	; set powerup cooldown
 	lda #50
@@ -1534,28 +1636,9 @@ not_gamepad_a:
 		rts					; Exit subroutine - not yet
 	:
 
-	; Spawn a rain based on psuedo RNG
-	ldx #1 					; Load X with 1
-	stx raincooldown		; Store it into heart cooldown -> to rpevent an error for the next call of this subroutine (next call will decrease cooldown by 1)
-
-	lda #1	 				; Load A with current level
-	clc						; Clear Carry flag
-	adc #1 					; Add with Carry - increment by 1 the level
-	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
-	asl						; Arithmetic Shift Left : A = A << 1 - bit 7 of old A is set to C and new byte 0 of A is clear
-	; +--> Result A is multiply by 4
-	sta temp 				; Store A into temp adress - save our value
-	jsr rand 				; Call rand routine - get next random value
-	tay 					; transfer A into Y
-	cpy temp				; Compare Y with temp (i.e. (lvl +1 ) * 4)
-	; continue if random value less than our calculated value
-	bcc :+ 					; Branch if Carry Clear - CPY set carry flag is Y >= M. If random value is less than our difficulty value an heart pop, other xise exit
-		rts					; exit
-	:
-
-	; An heart pop - Reset cooldown value to intial value
-	ldx #10 				; Load A with 20 - set new cool down period
-	stx raincooldown		; Store A into cooldown adress
+	; Rain always pop after coldown
+	lda #10
+	sta raincooldown
 	
 	; Check if a rain can be displayed (max 3 heart on screen)
 	ldy #0 					; Load Y with 0 - counter of heart list
@@ -1601,7 +1684,7 @@ not_gamepad_a:
 	lda #18				; Set Sprite index (18 in CHR)
 	sta oam+1,x
 	; set the sprite attributes (byte 2)
-	lda #%00000011			; Load A with 00000010 mask
+	lda #OBJ_PAL_4|OBJ_BG	; Load A with 00000010 mask
 	sta oam+2,x				; Sprite 1
 
 	; set the X position (byte 3)  of all four parts of the player ship
