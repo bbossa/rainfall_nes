@@ -94,6 +94,9 @@ displaylevel: .res 1
 leveldata: .res 10
 speeddata: .res 10
 dropspeed: .res 1
+pausecooldown: .res 1
+pauseflag: .res 1
+displaypause: .res 1
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -269,6 +272,9 @@ gameovertext:
 leveltext:
 	.byte " S T A G E ",0
 
+pausetext:
+	.byte " P A U S E",0
+
 .proc nmi
 	; save registers (to prevent corruption)
 	pha		; Push A to stack
@@ -404,6 +410,32 @@ lda #%00100000 ; does the level message need to be displayed?
 		and update
 		sta update
 @skipremovedisplaylevel:
+	lda #%10000000 ; pause
+	bit update
+	beq @skippausedisplay
+		lda pauseflag
+		beq :+
+		vram_set_address (NAME_TABLE_0_ADDRESS + 11*32 + 10)
+		assign_16i text_address, pausetext
+		jsr write_text
+		lda #%01111111 ; reset game over message update flag
+		and update
+		sta update
+		jmp @skippausedisplay
+		:
+		vram_set_address (NAME_TABLE_0_ADDRESS + 11*32 + 10)
+		ldx #0
+		lda #0
+		:
+			sta PPU_VRAM_IO
+			inx
+			cpx #10
+			bne :-
+		lda #%01111111 ; reset game over message update flag
+		and update
+		sta update
+
+@skippausedisplay:
 
 	lda #%11111110 ; reset score update flag
 	and update
@@ -506,7 +538,7 @@ titleloop:
 	;	7654 3210
 	;   Right - Left - Down - Up - Start - Select - B - A
 	lda gamepad				; Load A with gamepad input ()
-	and #PAD_A|PAD_START|PAD_L|PAD_R   	; i.e. AND #%00001001
+	and #PAD_A|PAD_START   	; i.e. AND #%00001001
 	beq titleloop			; Branch on Equal - Branch is zero flag is set - If A or Start is not presses, then result is 0 (any other button can be pressed)
 
 	; set our random seed based on the time counter since the splash screen was displayed
@@ -569,6 +601,10 @@ mainloop:
 	; Check user input
 	jsr player_actions
 
+	lda pauseflag
+	cmp #0
+	bne @skippause
+
 	; Spawn and move ennemies
 	jsr spawn_enemies
 	jsr move_enemies
@@ -582,6 +618,37 @@ mainloop:
 	; spawn and move rain
 	jsr spawn_rain
 	jsr move_rain
+
+@skippause:
+
+	; display pause
+	lda pauseflag
+	cmp #1
+	bne @notdisplaypause
+	lda displaypause
+	cmp #0
+	bne :+
+		; display pause
+		lda #1
+		sta displaypause
+		lda #%10000000 ; signal to display pause message
+		ora update
+		sta update
+	:
+
+@notdisplaypause:
+	lda pauseflag
+	bne @skipremovepause
+	lda displaypause
+	beq :+
+		lda #0
+		sta displaypause
+		lda #%10000000 ; signal to display pause message
+		ora update
+		sta update
+	:
+@skipremovepause:
+
 
 	lda displaylevel
 	beq @nodisplaylevelcountdown
@@ -629,6 +696,11 @@ mainloop:
 	beq :+
 		dec powerup_cooldown
 	:
+	lda pausecooldown
+	cmp #0
+	beq :+
+		dec pausecooldown
+	:
 
 	lda flag_bolt
 	beq @continue
@@ -666,6 +738,8 @@ mainloop:
 	lda gamepad 				; Load A with Pad A buttons status
 	and #PAD_L 					; AND with mask PAD_L (does left pressed)
 	beq not_gamepad_left		; Branch if Equal - zero flag is set -> means left not pressed
+		lda pauseflag
+		bne not_gamepad_left
 		; game pad has been pressed left
 		lda oam + 3 			; get current x of cloud (sprite 0 - byte 3)
 		cmp #0 					; Comparison with 0 (mean cloud touch the left border)
@@ -691,6 +765,8 @@ not_gamepad_left:
 	lda gamepad
 	and #PAD_R
 	beq not_gamepad_right
+		lda pauseflag
+		bne not_gamepad_right
 		; gamepad has been pressed right
 		lda oam + 3  			; get current X of cloud
 		clc 					; Set the carry flag to zero.
@@ -715,6 +791,8 @@ not_gamepad_right:
 	lda gamepad
 	and #PAD_A
 	beq not_gamepad_a
+		lda pauseflag
+		bne not_gamepad_a
 		; gamepad A button has been pressed
 		lda powerup_cooldown
 		cmp #0					; Compare with 0
@@ -739,10 +817,32 @@ not_gamepad_right:
 		lda #%00010000 ; set flag so the current lives will be displayed
 		ora update
 		sta update
-			
-		
+not_gamepad_a:
 
-not_gamepad_a:	
+	lda gamepad
+	and #PAD_START
+	beq not_gamepad_start
+	; gamepad start button has been pressed
+	lda screen_title
+	cmp #0
+	bne not_gamepad_start
+	; start pressed during game
+	lda pausecooldown
+	cmp #0
+	bne not_gamepad_start
+	; Start not pressed during last call
+	; Start new timer
+	lda #32
+	sta pausecooldown
+	; switch pause flag
+	lda pauseflag
+	eor #%00000001
+	sta pauseflag
+
+
+
+not_gamepad_start:
+			
 	rts
 .endproc
 
@@ -752,6 +852,10 @@ not_gamepad_a:
 	sta highscore
 	sta highscore+1
 	sta highscore+2
+
+	sta pausecooldown
+	sta pauseflag
+	sta displaypause
 
 
 	; Init with fixed seed
