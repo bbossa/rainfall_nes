@@ -97,6 +97,10 @@ dropspeed: .res 1
 pausecooldown: .res 1
 pauseflag: .res 1
 displaypause: .res 1
+successful_inputs: .res 1
+cheatactivated: .res 1
+flaginput: .res 1
+tmpinput: .res 1
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -532,13 +536,24 @@ titleloop:
  	lda #1
  	sta nmi_ready
 
+	; reset konami fail code
+	lda successful_inputs
+	bpl :+
+		dec successful_inputs
+		cmp #$EF
+		bne :+
+		lda #0
+		sta successful_inputs
+	:
+
 	; Poll gamepad
 	jsr gamepad_poll
+	jsr check_konami_code
 	;; Game pad is store as:
 	;	7654 3210
 	;   Right - Left - Down - Up - Start - Select - B - A
 	lda gamepad				; Load A with gamepad input ()
-	and #PAD_A|PAD_START   	; i.e. AND #%00001001
+	and #PAD_START   	; i.e. AND #%00001001
 	beq titleloop			; Branch on Equal - Branch is zero flag is set - If A or Start is not presses, then result is 0 (any other button can be pressed)
 
 	; set our random seed based on the time counter since the splash screen was displayed
@@ -735,6 +750,7 @@ mainloop:
 @continue:
 	; Poll gamepad
 	jsr gamepad_poll
+
 	lda gamepad 				; Load A with Pad A buttons status
 	and #PAD_L 					; AND with mask PAD_L (does left pressed)
 	beq not_gamepad_left		; Branch if Equal - zero flag is set -> means left not pressed
@@ -832,7 +848,7 @@ not_gamepad_a:
 	bne not_gamepad_start
 	; Start not pressed during last call
 	; Start new timer
-	lda #32
+	lda #16
 	sta pausecooldown
 	; switch pause flag
 	lda pauseflag
@@ -847,6 +863,46 @@ not_gamepad_start:
 .endproc
 
 .segment "CODE"
+konami_code:
+	;      U   U   D   D   L   R   L   R   B   A
+	.byte $10,$10,$20,$20,$40,$80,$40,$80,$02,$01
+
+.proc check_konami_code
+	; Only during title
+	lda screen_title
+	beq @end
+
+	ldy successful_inputs
+	bmi @end
+
+	lda gamepad
+	beq @end
+
+	; if flaginput = 0 -> first press of button
+	lda flaginput
+	bne @end ; flag input not equal to 0 -> skip
+	lda #1
+	sta flaginput
+
+	lda gamepad
+	cmp konami_code, y
+	beq @continue
+	lda #$FF
+	sta successful_inputs
+	jmp @end
+@continue:
+	iny
+	sty successful_inputs
+	cpy #$0A
+	bcc @end
+	lda #1
+	sta cheatactivated
+
+@end:
+	rts
+.endproc
+
+.segment "CODE"
 .proc init_value
 	lda #0 ; set initial high score to 000
 	sta highscore
@@ -856,6 +912,11 @@ not_gamepad_start:
 	sta pausecooldown
 	sta pauseflag
 	sta displaypause
+
+	sta successful_inputs
+	sta cheatactivated
+	sta flaginput
+	sta tmpinput
 
 
 	; Init with fixed seed
@@ -949,11 +1010,23 @@ not_gamepad_start:
 	sta lives
 	lda #1 ; set player starting power up
 	sta powerup
+	; Cheat code
+	lda cheatactivated
+	beq :+
+		lda #8
+		sta lives
+		lda #9
+		sta powerup
+	:
 	lda #0 ; reset our player_dead flag
 	sta player_dead
 
 	lda #10
 	sta raincooldown
+
+	; set new cooldown for start to prevent pausing at begining
+	lda #16
+	sta pausecooldown
 .endproc
 
 ;*****************************************************************
@@ -1336,6 +1409,10 @@ not_gamepad_start:
 	lda #%000000001 ; set flag to write score to the screen
 	ora update
 	sta update
+
+	; If cheat activated, no highscore
+	lda cheatactivated
+	bne @nothighscore
 
 	lda highscore+2
 	cmp score+2
@@ -2143,7 +2220,7 @@ title_text:
 .byte "R A I N  F A L L",0
 
 press_play_text:
-.byte "PRESS FIRE TO BEGIN",0
+.byte "PRESS START TO BEGIN",0
 
 title_attributes:
 .byte %00000101,%00000101,%00000101,%00000101

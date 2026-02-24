@@ -222,6 +222,11 @@ loop:
 	bne loop            ; Branch Not Equal - Branch if Z flag is clear (0) - Flag is set when X is equal to 0
 
 	sta gamepad         ; Store A (which contains all button status) to gamepad adress
+	cmp #0
+	bne :+
+		lda #0
+		sta flaginput
+	:
 	rts                 ; Exit subroutine
 .endproc
 
