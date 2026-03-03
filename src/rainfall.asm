@@ -119,6 +119,40 @@ oam: .res 256	; sprite OAM data
 .include "neslib.asm"
 
 ;*****************************************************************
+; Include Sound Engine and Sound Effects Data
+;*****************************************************************
+
+.segment "CODE"
+
+; FamiStudio config.
+FAMISTUDIO_CFG_PAL_SUPPORT    = 1
+FAMISTUDIO_CFG_EXTERNAL       = 1
+FAMISTUDIO_CFG_DPCM_SUPPORT   = 1
+FAMISTUDIO_CFG_SFX_SUPPORT    = 1 
+FAMISTUDIO_CFG_SFX_STREAMS    = 2
+FAMISTUDIO_CFG_EQUALIZER      = 1
+FAMISTUDIO_USE_VOLUME_TRACK   = 1
+FAMISTUDIO_USE_PITCH_TRACK    = 1
+FAMISTUDIO_USE_SLIDE_NOTES    = 1
+FAMISTUDIO_USE_VIBRATO        = 1
+FAMISTUDIO_USE_ARPEGGIO       = 1
+FAMISTUDIO_CFG_SMOOTH_VIBRATO = 1
+FAMISTUDIO_USE_RELEASE_NOTES  = 1
+FAMISTUDIO_DPCM_OFF           = $e000
+
+; CA65-specifc config.
+.define FAMISTUDIO_CA65_ZP_SEGMENT   ZEROPAGE
+.define FAMISTUDIO_CA65_RAM_SEGMENT  BSS
+.define FAMISTUDIO_CA65_CODE_SEGMENT CODE
+
+.include "famistudio_ca65.s"
+; .include "famitone2.s"
+
+.include "rainfall_musics.s"
+
+.segment "ZEROPAGE"
+
+;*****************************************************************
 ; Remainder of normal RAM area
 ;*****************************************************************
 
@@ -464,6 +498,10 @@ lda #%00100000 ; does the level message need to be displayed?
 	lda ppu_ctl1
 	sta PPU_MASK
 
+	; call famistudio play routine
+	jsr famistudio_update
+	; jsr FamiToneUpdate
+
 
 	; flag PPU update complete
 	ldx #0						; Set X to 0
@@ -496,6 +534,13 @@ irq:
  	; main application - rendering is currently off
 
 	jsr init_value
+
+	; Init music
+	lda #0											; PAL : 0 ; NTSC for any other value
+	ldx #.lobyte(music_data_rainfall_credit)
+	ldy #.hibyte(music_data_rainfall_credit)
+	jsr famistudio_init
+	; jsr FamiToneInit
  	
 
 	; initialize palette table
@@ -526,6 +571,10 @@ resetgame:
 
 	; Wait until the screen has been drawn
 	jsr ppu_update
+
+	; Load song 0
+	lda #0
+	jsr play_music
 
 titleloop:
 	; spawn and move rain
@@ -1028,6 +1077,31 @@ konami_code:
 	lda #16
 	sta pausecooldown
 .endproc
+
+;*********************************************************
+; Play a music track
+; a = number of the music track to play
+;*********************************************************/
+.segment "CODE"
+
+.proc play_music
+	sta temp+9 ; save music track number
+	tya ; save current register values
+	pha
+	txa
+	pha
+
+	lda temp+9 ; get music track to play
+	jsr famistudio_music_play
+	; jsr FamiToneMusicPlay
+
+	pla ; restore register values
+	tax
+	pla
+	tay
+	rts
+.endproc
+
 
 ;*****************************************************************
 ; Get setup for a new level
@@ -2264,9 +2338,10 @@ loop:
 .segment "CODE"
 .proc display_lives
 	vram_set_address (NAME_TABLE_0_ADDRESS + 28 * 32 + 14)
-	ldx lives
+	lda lives
 	beq @skip ; no lives to display
 	and #%00000111 ; limit to a max of 8
+	tax
 @loop:
 	lda #$17
 	sta PPU_VRAM_IO
@@ -2281,7 +2356,6 @@ loop:
 	tax
 	lda #0
 @loop2:
-	sta PPU_VRAM_IO
 	sta PPU_VRAM_IO
 	dex
 	bne @loop2
