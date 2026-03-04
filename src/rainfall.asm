@@ -2,6 +2,15 @@
 ; NES GAME : Rain Fall
 ;*****************************************************************
 
+;*****************************************************************
+; GAME MECHANIC VALUES
+;*****************************************************************
+RAIN_COOLDOWN_VALUE = 10
+HEART_COOLDOWN_VALUE = 200
+BOLT_COOLDOWN_VALUE = 250
+BOTTOM_LINE = 216
+START_LIVES = 5
+START_BOLT = 1
 
 ;*****************************************************************
 ; General considerations
@@ -28,7 +37,7 @@
 .segment "HEADER"
 INES_MAPPER = 0 ; 0 = NROM
 INES_MIRROR = 0 ; 0 = horizontal mirroring, 1 = vertical mirroring
-INES_SRAM   = 0 ; 1 = battery backed SRAM at $6000-7FFF
+INES_SRAM   = 1 ; 1 = battery backed SRAM at $6000-7FFF
 
 .byte 'N', 'E', 'S', $1A ; ID
 .byte $02 ; 16k PRG bank count
@@ -78,7 +87,6 @@ temp: .res 10
 bottom_line: .res 1
 score: .res 3
 update: .res 1
-highscore: .res 3
 lives: .res 1
 player_dead: .res 1
 powerup: .res 1
@@ -101,6 +109,9 @@ successful_inputs: .res 1
 cheatactivated: .res 1
 flaginput: .res 1
 tmpinput: .res 1
+
+.segment "SAVERAM"
+highscore: .res 3
 
 ;*****************************************************************
 ; Sprite Object Attirbute Memory Data area
@@ -553,83 +564,18 @@ paletteloop:
 	bcc paletteloop			; Branch on Carry Clear - If X is lower than 32, the Carry flag is not set, branch occurs.
 
 resetgame:
-	jsr clear_sprites
+	; Reset game
+	jsr reset_game
+	lda player_dead
+	cmp #1
+	jmp titleloop
 
-	lda #1
-	sta screen_title
-	lda #0
-	sta flag_bolt
-
-	; Draw the title screen
-	jsr display_title_screen
-
-	; Set game settings (TBD)
-	lda #VBLANK_NMI|BG_0000|OBJ_1000		; Should be complex number via combinaison of different mask (or)
-	sta ppu_ctl0
-	lda #BG_ON|OBJ_ON
-	sta ppu_ctl1
-
-	; Wait until the screen has been drawn
-	jsr ppu_update
-
-	; Load song 0
-	lda #0
-	jsr play_music
+credit:
+	jsr credit_loop
+	jmp resetgame
 
 titleloop:
-	; spawn and move rain
-	jsr spawn_rain
-	jsr move_rain
-
-	; ensure our changes are rendered
- 	lda #1
- 	sta nmi_ready
-
-	; reset konami fail code
-	lda successful_inputs
-	bpl :+
-		dec successful_inputs
-		cmp #$EF
-		bne :+
-		lda #0
-		sta successful_inputs
-	:
-
-	; Poll gamepad
-	jsr gamepad_poll
-	jsr check_konami_code
-	;; Game pad is store as:
-	;	7654 3210
-	;   Right - Left - Down - Up - Start - Select - B - A
-	lda gamepad				; Load A with gamepad input ()
-	and #PAD_START   	; i.e. AND #%00001001
-	beq titleloop			; Branch on Equal - Branch is zero flag is set - If A or Start is not presses, then result is 0 (any other button can be pressed)
-
-	; set our random seed based on the time counter since the splash screen was displayed
-	jsr init_game
-	jsr strike_objects
-
-	jsr setup_level			; Setup level
-
-	; Set screen flag title to 0
-	lda #$00
-	sta screen_title 
-
-	; draw the game screen
-	jsr display_game_screen
-
-	; display the player's cloud
-	jsr display_player
-
-	lda #64
-	sta displaylevel
-	lda #%00100001 ; set flag so the current score and level will be displayed
-	ora update
-	sta update
-	
-	; Draw sprites
-	jsr ppu_update
-
+	jsr title_loop
 
 mainloop:
 	; Load current time (based on number of drame displayed - 60 for NTSC and 50 for PAL)
@@ -647,8 +593,8 @@ mainloop:
 	lda player_dead
 	cmp #1
 	bcc @notgameover
-	cmp #240 ; we have waited long enough, jump back to the title screen 
-	beq resetgame
+	cmp #160 ; we have waited long enough, jump back to the title screen 
+	beq credit
 	cmp #20
 	bne @notgameoversetup
 	lda #%00001000 ; signal to display Game Over message
@@ -659,6 +605,8 @@ mainloop:
  	sta nmi_ready
 @notgameoversetup:
 	inc player_dead
+	lda #1
+ 	sta nmi_ready
 	jmp mainloop
 @notgameover:
 
@@ -669,19 +617,8 @@ mainloop:
 	cmp #0
 	bne @skippause
 
-	; Spawn and move ennemies
-	jsr spawn_enemies
-	jsr move_enemies
-
-	; Spawn and move powerup
-	jsr spawn_heart
-	jsr move_heart
-	jsr spawn_bolt
-	jsr move_bolt
-
-	; spawn and move rain
-	jsr spawn_rain
-	jsr move_rain
+	; Game loop
+	jsr game_loop
 
 @skippause:
 
@@ -699,6 +636,10 @@ mainloop:
 		ora update
 		sta update
 	:
+	; Return to main menu if select is pressed
+	lda gamepad				; Load A with gamepad input ()
+	and #PAD_SELECT   
+	bne resetgame
 
 @notdisplaypause:
 	lda pauseflag
@@ -912,6 +853,177 @@ not_gamepad_start:
 .endproc
 
 .segment "CODE"
+.proc game_loop
+	; Spawn and move ennemies
+	jsr spawn_enemies
+	jsr move_enemies
+
+	; Spawn and move powerup
+	jsr spawn_heart
+	jsr move_heart
+	jsr spawn_bolt
+	jsr move_bolt
+
+	; spawn and move rain
+	jsr spawn_rain
+	jsr move_rain
+
+	rts
+.endproc
+
+.segment "CODE"
+.proc reset_game
+	jsr clear_sprites
+	lda #1
+	sta screen_title
+	lda #0
+	sta flag_bolt
+	sta pauseflag
+	sta displaypause
+
+	; Draw the title screen
+	jsr display_title_screen
+
+	; Set game settings (TBD)
+	lda #VBLANK_NMI|BG_0000|OBJ_1000		; Should be complex number via combinaison of different mask (or)
+	sta ppu_ctl0
+	lda #BG_ON|OBJ_ON
+	sta ppu_ctl1
+
+	; Wait until the screen has been drawn
+	jsr ppu_update
+
+	; Load song 0
+	lda #0
+	jsr play_music
+
+	rts
+.endproc
+
+.segment "CODE"
+.proc title_loop
+@titleloop:
+	; spawn and move rain
+	jsr spawn_rain
+	jsr move_rain
+
+	; ensure our changes are rendered
+ 	lda #1
+ 	sta nmi_ready
+
+	; reset konami fail code
+	lda successful_inputs
+	bpl :+
+		dec successful_inputs
+		cmp #$EF
+		bne :+
+		lda #0
+		sta successful_inputs
+	:
+
+	; Poll gamepad
+	jsr gamepad_poll
+	jsr check_konami_code
+
+	; Check if user want to reset highscore
+	lda gamepad
+	and #%00100110
+	beq :+
+		jsr reset_highscore
+	:
+	;; Game pad is store as:
+	;	7654 3210
+	;   Right - Left - Down - Up - Start - Select - B - A
+	lda pausecooldown
+	cmp #0
+	beq :+
+		dec pausecooldown
+		jmp @titleloop
+	:
+
+	lda gamepad				; Load A with gamepad input ()
+	and #PAD_START   	; i.e. AND #%00001001
+	beq @titleloop			; Branch on Equal - Branch is zero flag is set - If A or Start is not pressed, then result is 0 (any other button can be pressed)
+
+	; set our random seed based on the time counter since the splash screen was displayed
+	jsr init_game
+	jsr strike_objects
+
+	jsr setup_level			; Setup level
+
+	; Set screen flag title to 0
+	lda #$00
+	sta screen_title 
+
+	; draw the game screen
+	jsr display_game_screen
+
+	; display the player's cloud
+	jsr display_player
+
+	lda #64
+	sta displaylevel
+	lda #%00100001 ; set flag so the current score and level will be displayed
+	ora update
+	sta update
+	
+	; Draw sprites
+	jsr ppu_update
+
+	rts
+.endproc
+
+.segment "CODE"
+.proc reset_highscore
+	lda #0
+	sta highscore
+	sta highscore + 1
+	sta highscore + 2
+
+	rts
+.endproc
+
+.segment "CODE"
+.proc credit_loop
+
+	; Remove all sprites
+	jsr clear_sprites
+
+	; Reset player death
+	lda #0
+	sta player_dead
+
+	; stop music
+	jsr famistudio_music_stop
+
+	; Load song 0 - Credit
+	lda #0
+	jsr play_music
+
+	; Display Credit
+	jsr display_credit
+
+@creditloop:
+	; spawn and move rain
+	jsr spawn_rain
+	jsr move_rain
+
+	; ensure our changes are rendered
+ 	lda #1
+ 	sta nmi_ready
+
+	jsr gamepad_poll
+	lda gamepad				; Load A with gamepad input ()
+	and #PAD_A|PAD_START
+	beq @creditloop	
+
+	lda #16
+	sta pausecooldown
+
+	rts
+.endproc
+
+.segment "CODE"
 konami_code:
 	;      U   U   D   D   L   R   L   R   B   A
 	.byte $10,$10,$20,$20,$40,$80,$40,$80,$02,$01
@@ -954,9 +1066,9 @@ konami_code:
 .segment "CODE"
 .proc init_value
 	lda #0 ; set initial high score to 000
-	sta highscore
-	sta highscore+1
-	sta highscore+2
+	;sta highscore
+	;sta highscore+1
+	;sta highscore+2
 
 	sta pausecooldown
 	sta pauseflag
@@ -981,17 +1093,17 @@ konami_code:
 	sta SEED2+1				; Store into high byte of seed2
 
 	; init table
-	lda #10
+	lda #RAIN_COOLDOWN_VALUE
 	sta raincooldown
 
-	lda #200
+	lda #HEART_COOLDOWN_VALUE
 	sta heartcooldownvalue
 
-	lda #250
+	lda #BOLT_COOLDOWN_VALUE
 	sta boltcooldownvalue
 
 	; Set botom line Y
-	lda #216
+	lda #BOTTOM_LINE
 	sta bottom_line
 
 	; init level data table
@@ -1055,9 +1167,9 @@ konami_code:
 	sta score+1
 	sta score+2
 
-	lda #5 ; set the players starting lives
+	lda #START_LIVES ; set the players starting lives
 	sta lives
-	lda #1 ; set player starting power up
+	lda #START_BOLT ; set player starting power up
 	sta powerup
 	; Cheat code
 	lda cheatactivated
@@ -1070,7 +1182,7 @@ konami_code:
 	lda #0 ; reset our player_dead flag
 	sta player_dead
 
-	lda #10
+	lda #RAIN_COOLDOWN_VALUE
 	sta raincooldown
 
 	; set new cooldown for start to prevent pausing at begining
@@ -2284,6 +2396,83 @@ clear_oam:
 .endproc
 
 ;*****************************************************************
+; Display Credit screen
+;*****************************************************************
+.segment "CODE"
+
+title_credit:
+.byte "C R E D I T",0
+game_credit:
+.byte "R A I N F A L L",0
+credit_1:
+.byte "NES programing:",0
+credit_2:
+.byte "Game Design   :",0
+credit_3:
+.byte "Graphics      :",0
+credit_4:
+.byte "Musics        :",0
+
+credit_BBO:
+.byte "Benjamin BOSSA",0
+credit_TPO:
+.byte "Thomas PONS",0
+
+
+.proc display_credit
+	jsr ppu_off 												; Wait for the screen to be drawn and then turn off drawing
+	jsr clear_nametable 										; Clear the 1st name table
+
+	; Write the Credit text
+	vram_set_address (NAME_TABLE_0_ADDRESS + 4 * 32 + 10)		; Set VRAM position (tiles index set at table 0 start index + line shift + row shift) -> Here 4 lines and 7 colones from top left position
+	assign_16i text_address, title_credit							; Assign 16 bit adress
+	jsr write_text												; Write text at specified position
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 8 * 32 + 8)
+	assign_16i text_address, game_credit
+	jsr write_text	
+
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 14 * 32 + 2)
+	assign_16i text_address, credit_1
+	jsr write_text
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 14 * 32 + 17)
+	assign_16i text_address, credit_BBO
+	jsr write_text
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 16 * 32 + 2)
+	assign_16i text_address, credit_2
+	jsr write_text
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 16 * 32 + 17)
+	assign_16i text_address, credit_BBO
+	jsr write_text
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 18 * 32 + 2)
+	assign_16i text_address, credit_3
+	jsr write_text
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 18 * 32 + 17)
+	assign_16i text_address, credit_BBO
+	jsr write_text
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 20 * 32 + 2)
+	assign_16i text_address, credit_4
+	jsr write_text
+
+	vram_set_address (NAME_TABLE_0_ADDRESS + 20 * 32 + 17)
+	assign_16i text_address, credit_TPO
+	jsr write_text
+
+
+	jsr ppu_update ; Wait until the screen has been drawn
+
+	rts
+
+.endproc
+
+;*****************************************************************
 ; Display Title Screen
 ;*****************************************************************
 .segment "ZEROPAGE"
@@ -2340,7 +2529,7 @@ loop:
 	vram_set_address (NAME_TABLE_0_ADDRESS + 28 * 32 + 14)
 	lda lives
 	beq @skip ; no lives to display
-	and #%00000111 ; limit to a max of 8
+	and #%00001111 ; limit to a max of 15
 	tax
 @loop:
 	lda #$17
