@@ -111,6 +111,9 @@ cheatactivated: .res 1
 flaginput: .res 1
 tmpinput: .res 1
 flag_collision: .res 1
+player_speed: .res 1
+player_max_speed: .res 1
+player_flag_move: .res 1
 
 .segment "SAVERAM"
 highscore: .res 3
@@ -709,6 +712,9 @@ mainloop:
 		dec pausecooldown
 	:
 
+	lda #0
+	sta player_flag_move
+
 	lda flag_bolt
 	beq @continue
 
@@ -749,12 +755,23 @@ mainloop:
 		lda pauseflag
 		bne not_gamepad_left
 		; game pad has been pressed left
+		lda #1
+		sta player_flag_move
+
+		lda player_speed
+		inc player_speed
+		cmp player_max_speed
+		bmi :+
+			lda player_max_speed
+			sta player_speed
+		:
+
 		lda oam + 3 			; get current x of cloud (sprite 0 - byte 3)
 		; cmp #0 					; Comparison with 0 (mean cloud touch the left border)
 		; beq not_gamepad_left	; Branch if equal - Zero flag is set -> comparison is true don't move
 		; subtract 4 from the ship position
 		sec 					; Set the carry flag to one.
-		sbc #MAX_SPEED_1					; Subtract with Carry A,Z,C,N = A-M-(1-C)
+		sbc player_speed					; Subtract with Carry A,Z,C,N = A-M-(1-C)
 		; update the six sprites that make up the cloud
 		; S1 S2 S3
 		; S4 S5 S6
@@ -776,9 +793,19 @@ not_gamepad_left:
 		lda pauseflag
 		bne not_gamepad_right
 		; gamepad has been pressed right
+		lda #1
+		sta player_flag_move
+
+		lda player_speed
+		inc player_speed
+		cmp player_max_speed
+		bmi :+
+			lda player_max_speed
+			sta player_speed
+		:
 		lda oam + 3 			; get current X of cloud
 		clc 					; Set the carry flag to zero.
-		adc #MAX_SPEED_1 					; Add with carry
+		adc player_speed					; Add with carry
 		; update the six sprites that make up the cloud
 		sta oam + 3 			; sprite 1
 		sta oam + 15 			; sprite 4
@@ -849,7 +876,11 @@ not_gamepad_a:
 
 
 not_gamepad_start:
-			
+	lda player_flag_move
+	bne :+
+		lda #0
+		sta player_speed
+	:
 	rts
 .endproc
 
@@ -1066,10 +1097,10 @@ konami_code:
 
 .segment "CODE"
 .proc init_value
-	lda #0 ; set initial high score to 000
-	;sta highscore
-	;sta highscore+1
-	;sta highscore+2
+	lda #0
+
+	sta player_flag_move
+	sta player_speed
 
 	sta pausecooldown
 	sta pauseflag
@@ -1079,6 +1110,9 @@ konami_code:
 	sta cheatactivated
 	sta flaginput
 	sta tmpinput
+
+	lda #MAX_SPEED_1
+	sta player_max_speed
 
 
 	; Init with fixed seed
@@ -2464,18 +2498,19 @@ title_credit:
 game_credit:
 .byte "R A I N F A L L",0
 credit_1:
-.byte "NES programing:",0
+.byte "NES Game:",0
 credit_2:
-.byte "Game Design   :",0
-credit_3:
-.byte "Graphics      :",0
-credit_4:
-.byte "Musics        :",0
+.byte "Musics  :",0
 
 credit_BBO:
 .byte "Benjamin BOSSA",0
 credit_TPO:
 .byte "Thomas PONS",0
+
+credit_attributes:
+.byte %00000101,%00000101,%00000101,%00000101
+.byte %00000101,%00000101,%00000101,%00000101
+
 
 
 .proc display_credit
@@ -2492,38 +2527,33 @@ credit_TPO:
 	jsr write_text	
 
 
-	vram_set_address (NAME_TABLE_0_ADDRESS + 14 * 32 + 2)
+	vram_set_address (NAME_TABLE_0_ADDRESS + 16 * 32 + 4)
 	assign_16i text_address, credit_1
 	jsr write_text
 
-	vram_set_address (NAME_TABLE_0_ADDRESS + 14 * 32 + 17)
+	vram_set_address (NAME_TABLE_0_ADDRESS + 16 * 32 + 14)
 	assign_16i text_address, credit_BBO
 	jsr write_text
 
-	vram_set_address (NAME_TABLE_0_ADDRESS + 16 * 32 + 2)
+	vram_set_address (NAME_TABLE_0_ADDRESS + 19 * 32 + 4)
 	assign_16i text_address, credit_2
 	jsr write_text
 
-	vram_set_address (NAME_TABLE_0_ADDRESS + 16 * 32 + 17)
-	assign_16i text_address, credit_BBO
-	jsr write_text
-
-	vram_set_address (NAME_TABLE_0_ADDRESS + 18 * 32 + 2)
-	assign_16i text_address, credit_3
-	jsr write_text
-
-	vram_set_address (NAME_TABLE_0_ADDRESS + 18 * 32 + 17)
-	assign_16i text_address, credit_BBO
-	jsr write_text
-
-	vram_set_address (NAME_TABLE_0_ADDRESS + 20 * 32 + 2)
-	assign_16i text_address, credit_4
-	jsr write_text
-
-	vram_set_address (NAME_TABLE_0_ADDRESS + 20 * 32 + 17)
+	vram_set_address (NAME_TABLE_0_ADDRESS + 19 * 32 + 14)
 	assign_16i text_address, credit_TPO
 	jsr write_text
 
+	; Set the title text to use the 2nd palette entries - 8 adress
+	vram_set_address (ATTRIBUTE_TABLE_0_ADDRESS	+ 16)		; Get position of the palette
+	assign_16i paddr, credit_attributes
+
+	ldy #0														; Load Y with 0
+loop:
+	lda (paddr),y												; Load address + Y (palette)
+	sta PPU_VRAM_IO												; Store palette
+	iny															; Increment Y
+	cpy #8														; Compare with 8
+	bne loop
 
 	jsr ppu_update ; Wait until the screen has been drawn
 
