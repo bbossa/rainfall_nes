@@ -11,6 +11,7 @@ BOLT_COOLDOWN_VALUE = 250
 BOTTOM_LINE = 216
 START_LIVES = 5
 START_BOLT = 1
+MAX_SPEED_1 = 4
 
 ;*****************************************************************
 ; General considerations
@@ -109,6 +110,7 @@ successful_inputs: .res 1
 cheatactivated: .res 1
 flaginput: .res 1
 tmpinput: .res 1
+flag_collision: .res 1
 
 .segment "SAVERAM"
 highscore: .res 3
@@ -748,11 +750,11 @@ mainloop:
 		bne not_gamepad_left
 		; game pad has been pressed left
 		lda oam + 3 			; get current x of cloud (sprite 0 - byte 3)
-		cmp #0 					; Comparison with 0 (mean cloud touch the left border)
-		beq not_gamepad_left	; Branch if equal - Zero flag is set -> comparison is true don't move
+		; cmp #0 					; Comparison with 0 (mean cloud touch the left border)
+		; beq not_gamepad_left	; Branch if equal - Zero flag is set -> comparison is true don't move
 		; subtract 4 from the ship position
 		sec 					; Set the carry flag to one.
-		sbc #4 					; Subtract with Carry A,Z,C,N = A-M-(1-C)
+		sbc #MAX_SPEED_1					; Subtract with Carry A,Z,C,N = A-M-(1-C)
 		; update the six sprites that make up the cloud
 		; S1 S2 S3
 		; S4 S5 S6
@@ -774,25 +776,24 @@ not_gamepad_left:
 		lda pauseflag
 		bne not_gamepad_right
 		; gamepad has been pressed right
-		lda oam + 3  			; get current X of cloud
-		clc 					; Set the carry flag to zero.
-		adc #22 				; allow with width of cloud
-		cmp #254 				; Comparison with right border	
-		beq not_gamepad_right 	; don't move
 		lda oam + 3 			; get current X of cloud
 		clc 					; Set the carry flag to zero.
-		adc #4 					; Add with carry
+		adc #MAX_SPEED_1 					; Add with carry
 		; update the six sprites that make up the cloud
 		sta oam + 3 			; sprite 1
 		sta oam + 15 			; sprite 4
+
 		clc 					; Set the carry flag to zero.
 		adc #8 					; Add with carry
 		sta oam + 7 			; sprite 2
 		sta oam + 19 			; sprite 5
+		
 		clc 					; Set the carry flag to zero.
 		adc #8 					; Add with carry
 		sta oam + 11 			; sprite 3
 		sta oam + 23			; sprite 6
+
+
 not_gamepad_right:
 	lda gamepad
 	and #PAD_A
@@ -927,8 +928,8 @@ not_gamepad_start:
 
 	; Check if user want to reset highscore
 	lda gamepad
-	and #%00100110
-	beq :+
+	cmp #%00100110
+	bne :+
 		jsr reset_highscore
 	:
 	;; Game pad is store as:
@@ -1412,19 +1413,6 @@ konami_code:
 	lda speeddata,x
 	sta dropspeed
 
-	; setup for collision detection with player
-	lda oam ; get cloud Y position
-	clc
-	adc #5
-	sta cy1
-	lda oam+3 ; get cloud x position
-	sta cx1
-	lda #9 ; cloud is 16 pixel height 
-	sta ch1
-	lda #24 ; bullet is 24 pixel wide
-	sta cw1
-
-
 	ldy #0				; Load Y with 0
 	lda #0				; Load X with 0
 @loop:
@@ -1475,6 +1463,41 @@ konami_code:
 	sta oam+12,x		; sprite 4
 
 	; Detection with player
+	lda #%00000001
+	sta flag_collision
+	jsr check_player_collision
+
+@skip:
+	iny 				; Increment Y goto to next enemy
+	cpy #10				; Compare Y with 10
+	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
+
+	rts					; exit
+.endproc
+
+.segment "CODE"
+.proc check_player_collision
+	; Save A, X & Y
+	pha
+	txa
+	pha
+	tya
+	pha
+
+	; setup for collision detection with player
+	lda oam ; get cloud Y position
+	clc
+	adc #5
+	sta cy1
+	lda oam+3 ; get cloud x position
+	sta cx1
+	lda #9 ; cloud is 16 pixel height 
+	sta ch1
+	lda #24 ; bullet is 24 pixel wide
+	sta cw1
+
+	; Check player collision
+
 	lda oam,x ; get enemy y position
 	clc
 	adc #1
@@ -1489,27 +1512,121 @@ konami_code:
 	sta ch2
 	jsr collision_test
 	bcc @skip
+	jsr player_hit
 
+
+@skip:
+	; check middle and right sprites on border
+	lda cx1
+	cmp #247
+	bcc @noborder1
+		lda #0
+		sta cx1
+		lda oam + 7
+		clc
+		adc #16 	; 2 sprites width
+		sta cw1
+		jsr collision_test
+		bcc @end
+		jsr player_hit
+		jmp @end
+@noborder1:
+
+	; Check case right sprites on border
+	lda cx1
+	cmp #239
+	bcc @noborder2
+		lda #0
+		sta cx1
+		lda oam + 11
+		clc
+		adc #8 	; 1 sprite width
+		sta cw1
+		jsr collision_test
+		bcc @end
+		jsr player_hit
+		jmp @end
+@noborder2:
+
+@end:
+
+	; Retrive last value
+	pla
+	tay
+	pla
+	tax
+	pla
+
+	rts
+.endproc
+
+.segment "CODE"
+.proc player_hit
 	; Player hit ennemy
 	lda #$ff
 	sta oam,x ; erase enemy
 	sta oam+4,x
 	sta oam+8,x
 	sta oam+12,x
-	lda #0 ; clear enemy's data flag
-	sta enemydata,y
 
-	lda level
-	jsr add_score
+	lda #%00000001
+	bit flag_collision
+	beq @notdrop
+		lda #0 ; clear enemy's data flag
+		sta enemydata,y
 
-	jsr add_level
+		lda level
+		jsr add_score
 
-@skip:
-	iny 				; Increment Y goto to next enemy
-	cpy #10				; Compare Y with 10
-	bne @loop			; Branch Not Equal - Branch if zero flag is not set. Till Y < 10, loop
+		jsr add_level
 
-	rts					; exit
+@notdrop:
+	lda #%00000010
+	bit flag_collision
+	beq @notheart
+		lda #0 ; clear enemy's data flag
+		sta heardata,y
+		jsr add_life
+@notheart:
+	lda #%00000100
+	bit flag_collision
+	beq @notbolt
+		lda #0 ; clear enemy's data flag
+		sta boltdata,y
+		jsr add_powerup
+@notbolt:
+
+	; reset collision flag
+	lda #0
+	sta flag_collision
+
+	rts
+.endproc
+
+.segment "CODE"
+.proc add_powerup
+	lda powerup
+	cmp #9
+	bpl :+
+		inc powerup ; decrease our lives counter
+		lda #%00010000 ; set flag so the current lives will be displayed
+		ora update
+		sta update
+	:
+.endproc
+
+.segment "CODE"
+.proc add_life
+	lda lives
+	cmp #8
+	bpl :+
+		inc lives ; decrease our lives counter
+		lda #%00000100 ; set flag so the current lives will be displayed
+		ora update
+		sta update
+	:
+
+	rts
 .endproc
 
 .segment "CODE"
@@ -1814,39 +1931,9 @@ konami_code:
 	sta oam+12,x		; sprite 4
 
 	; Detection with player
-	lda oam,x ; get heart y position
-	clc
-	adc #1 ; first row is empty
-	sta cy2
-	lda oam+3,x ; get heart x position
-	clc
-	adc #2
-	sta cx2
-	lda #11 ; set heart width 
-	sta cw2
-	lda #10 ; set heart height
-	sta ch2
-	jsr collision_test
-	bcc @skip
-
-	; Player hit heart
-	lda #$ff
-	sta oam,x ; erase heart
-	sta oam+4,x
-	sta oam+8,x
-	sta oam+12,x
-	lda #0 ; clear heart's data flag
-	sta heardata,y
-
-	; Increase player's life
-	lda lives
-	cmp #8
-	bpl :+
-		inc lives ; decrease our lives counter
-		lda #%00000100 ; set flag so the current lives will be displayed
-		ora update
-		sta update
-	:
+	lda #%00000010
+	sta flag_collision
+	jsr check_player_collision
 
 @skip:
 	iny 				; Increment Y goto to next heart
@@ -2033,37 +2120,9 @@ konami_code:
 	sta oam+12,x		; sprite 4
 
 	; Detection with player
-	lda oam,x ; get bolt y position
-	sta cy2
-	lda oam+3,x ; get bolt x position
-	clc
-	adc #3		; Add with carry - Bolt sprite has 3 first column empty.
-	sta cx2
-	lda #10 ; set bolt width
-	sta cw2
-	lda #15 ; set bolt width
-	sta ch2
-	jsr collision_test
-	bcc @skip
-
-	; Player hit bolt
-	lda #$ff
-	sta oam,x ; erase enemy
-	sta oam+4,x
-	sta oam+8,x
-	sta oam+12,x
-	lda #0 ; clear bolt's data flag
-	sta boltdata,y
-
-	; Increase player bolt powerup
-	lda powerup
-	cmp #9
-	bpl :+
-		inc powerup ; decrease our lives counter
-		lda #%00010000 ; set flag so the current lives will be displayed
-		ora update
-		sta update
-	:
+	lda #%00000100
+	sta flag_collision
+	jsr check_player_collision
 
 @skip:
 	iny 				; Increment Y goto to next enemy
