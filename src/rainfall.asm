@@ -2507,10 +2507,22 @@ credit_BBO:
 credit_TPO:
 .byte "Thomas PONS",0
 
+;**
+; Each byte define a meta-tile composed of 4tiles :
+; +--+--+
+; |10|32|
+; +--+--+
+; |54|76|
+; +--+--+
+; Each byte compose the next meta-tiles.
+;**
 credit_attributes:
 .byte %00000101,%00000101,%00000101,%00000101
 .byte %00000101,%00000101,%00000101,%00000101
 
+name_attributes_1:
+.byte %00000000,%00000000,%00000000,%01000100
+.byte %01010101,%01010101,%01010101,%01010101
 
 
 .proc display_credit
@@ -2554,6 +2566,18 @@ loop:
 	iny															; Increment Y
 	cpy #8														; Compare with 8
 	bne loop
+
+	; Set the title text to use the 2nd palette entries - 8 adress
+	vram_set_address (ATTRIBUTE_TABLE_0_ADDRESS	+ 32)		; Get position of the palette
+	assign_16i paddr, name_attributes_1
+
+	ldy #0														; Load Y with 0
+loop2:
+	lda (paddr),y												; Load address + Y (palette)
+	sta PPU_VRAM_IO												; Store palette
+	iny															; Increment Y
+	cpy #8														; Compare with 8
+	bne loop2
 
 	jsr ppu_update ; Wait until the screen has been drawn
 
